@@ -1365,6 +1365,19 @@
             }
           ]
         },
+        "focusedWindowStyle": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/style"
+            },
+            {
+              "$ref": "#/definitions/reference"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "appGlyphs": {
           "anyOf": [
             {

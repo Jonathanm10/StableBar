@@ -1000,6 +1000,7 @@ struct WorkspaceView: View {
                 let style = styles.label(hovered: hovered)
                 let glyph = styles.glyph(hovered: hovered)
                 let zoomedBelow = magnification.map { (glyph.height ?? 14) * ($0 - 1) } ?? 0
+                let textColor = style.foreground?.color ?? (workspace.isFocused ? appearance.accentText : appearance.foreground)
                 HStack(spacing: style.spacing ?? 4) {
                     Button { workspaceStore.select(workspace) } label: {
                         Text(workspace.label)
@@ -1013,29 +1014,35 @@ struct WorkspaceView: View {
                             ForEach(workspace.windows) { window in
                                 windowButton(windows: [window], below: zoomedBelow, action: { workspaceStore.focus(window) }) {
                                     HStack(spacing: style.spacing ?? 4) {
-                                        appIcon(window.app, style: glyph, spacing: style.spacing ?? 4)
+                                        appIcon(window.app, style: focusedWindowGlyph(glyph, focused: window.isFocused), spacing: style.spacing ?? 4)
                                         if let length = configuration?.titleLength, length > 0 {
                                             Text(String(window.title.prefix(length))).magnified(.label, by: magnifier, upTo: magnification)
                                         }
                                     }
+                                    .background { focusedWindowHighlight(window.isFocused, color: textColor) }
                                     .contentShape(Rectangle())
                                 }
                                 .help(magnification == nil ? window.title : "")
-                                .accessibilityLabel("\(window.app.name): \(window.title)")
+                                .accessibilityLabel("\(window.app.name): \(window.title)\(window.isFocused ? ", focused" : "")")
+                                .accessibilityAddTraits(window.isFocused ? .isSelected : [])
                             }
                         } else {
                             ForEach(workspace.apps) { app in
-                                windowButton(windows: workspace.windows.filter { $0.app.bundleID == app.bundleID }, below: zoomedBelow,
-                                             action: { workspaceStore.select(workspace) }) {
-                                    appIcon(app, style: glyph, spacing: style.spacing ?? 4)
+                                let windows = workspace.windows.filter { $0.app.bundleID == app.bundleID }
+                                let focused = windows.contains(where: \.isFocused)
+                                windowButton(windows: windows, below: zoomedBelow, action: { workspaceStore.select(workspace) }) {
+                                    appIcon(app, style: focusedWindowGlyph(glyph, focused: focused), spacing: style.spacing ?? 4)
+                                        .background { focusedWindowHighlight(focused, color: textColor) }
                                 }
                                 .help(magnification == nil ? app.name : "")
+                                .accessibilityLabel("\(app.name)\(focused ? ", focused" : "")")
+                                .accessibilityAddTraits(focused ? .isSelected : [])
                             }
                         }
                     }
                 }
                 .font(WidgetAppearance(style, defaults: defaults).font)
-                .foregroundStyle(style.foreground?.color ?? (workspace.isFocused ? appearance.accentText : appearance.foreground))
+                .foregroundStyle(textColor)
                 .padding(.leading, style.paddingLeading ?? style.paddingHorizontal ?? 7)
                 .padding(.trailing, style.paddingTrailing ?? style.paddingHorizontal ?? 7)
                 .frame(width: style.width.map { CGFloat($0) }, height: style.height.map { CGFloat($0) })
@@ -1121,6 +1128,28 @@ struct WorkspaceView: View {
         } else {
             Button(action: action) { label().padding(.bottom, below).contentShape(Rectangle()) }
                 .padding(.bottom, -below)
+        }
+    }
+
+    private func focusedWindowGlyph(_ glyph: WidgetStyle, focused: Bool) -> WidgetStyle {
+        guard focused, let configuration else { return glyph }
+        return configuration.focusedWindowStyle.inheriting(glyph)
+    }
+
+    /// Drawn outside the item's frame so focus moving between windows doesn't shift the icons.
+    @ViewBuilder private func focusedWindowHighlight(_ focused: Bool, color: Color) -> some View {
+        if focused {
+            let style = configuration?.focusedWindowStyle ?? WidgetStyle()
+            RoundedRectangle(cornerRadius: style.cornerRadius ?? 4)
+                .fill(style.background?.shapeStyle ?? AnyShapeStyle(color.opacity(0.22)))
+                .overlay {
+                    if let border = style.borderColor {
+                        RoundedRectangle(cornerRadius: style.cornerRadius ?? 4).strokeBorder(border.color, lineWidth: style.borderWidth ?? 1)
+                    }
+                }
+                .padding(.horizontal, -3)
+                .padding(.vertical, -2)
+                .allowsHitTesting(false)
         }
     }
 

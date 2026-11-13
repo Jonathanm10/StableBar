@@ -146,7 +146,7 @@ import Testing
 
 @Test func yabaiSnapshotMapsDisplaysAndAppWindowsToWorkspaces() throws {
     let spaces = Data(#"[{"index":10,"display":1,"has-focus":false,"is-visible":false},{"index":2,"display":1,"has-focus":true,"is-visible":true},{"index":1,"display":2,"has-focus":false,"is-visible":true}]"#.utf8)
-    let windows = Data(#"[{"pid":41,"app":"Safari","space":1,"id":1,"title":"Window 1"},{"pid":42,"app":"Finder","space":1,"id":2,"title":"Window 2"},{"pid":43,"app":"Safari","space":1,"id":3,"title":"Window 3"},{"pid":41,"app":"Safari","space":2,"id":4,"title":"Window 4"}]"#.utf8)
+    let windows = Data(#"[{"pid":41,"app":"Safari","space":1,"id":1,"title":"Window 1"},{"pid":42,"app":"Finder","space":1,"id":2,"title":"Window 2","has-focus":true},{"pid":43,"app":"Safari","space":1,"id":3,"title":"Window 3"},{"pid":41,"app":"Safari","space":2,"id":4,"title":"Window 4"}]"#.utf8)
     let displays = Data(#"[{"id":80,"index":1},{"id":90,"index":2}]"#.utf8)
     let snapshot = try yabaiSnapshot(spaces: spaces, windows: windows, displays: displays, screenIDs: [90, 80],
                                      bundleIDs: [41: "com.apple.Safari", 42: "com.apple.finder", 43: "com.apple.Safari"])
@@ -156,6 +156,7 @@ import Testing
     #expect(snapshot[0].isVisible)
     #expect(snapshot[0].windows.map(\.id) == [1, 2, 3])
     #expect(snapshot[0].windows.map(\.title) == ["Window 1", "Window 2", "Window 3"])
+    #expect(snapshot[0].windows.map(\.isFocused) == [false, true, false])
     #expect(snapshot[0].windows.map(\.app.bundleID) == ["com.apple.Safari", "com.apple.finder", "com.apple.Safari"])
     #expect(snapshot[1].windows.map(\.id) == [4])
     #expect(snapshot[2].windows.isEmpty)
@@ -179,7 +180,7 @@ import Testing
     let windows = Data(#"""
     {"ok":true,"kind":"query","status":"success","result":{"kind":"windows","payload":{"windows":[
       {"id":"ow_a","windowId":11,"workspace":{"id":"u1","rawName":"1","displayName":"Web","number":1},"app":{"name":"Safari","bundleId":"com.apple.Safari"},"title":"Docs","isScratchpad":false},
-      {"id":"ow_b","windowId":12,"workspace":{"id":"u1","rawName":"1","displayName":"Web","number":1},"app":{"name":"Ghostty"},"isScratchpad":false},
+      {"id":"ow_b","windowId":12,"workspace":{"id":"u1","rawName":"1","displayName":"Web","number":1},"app":{"name":"Ghostty"},"isScratchpad":false,"isFocused":true},
       {"id":"ow_c","windowId":13,"workspace":{"id":"u1","rawName":"1","displayName":"Web","number":1},"app":{"name":"Safari","bundleId":"com.apple.Safari"},"title":"Mail","isScratchpad":false},
       {"id":"ow_d","windowId":14,"workspace":{"id":"u2","rawName":"2","displayName":"2","number":2},"app":{"name":"Notes","bundleId":"com.apple.Notes"},"title":"Scratch","isScratchpad":true},
       {"id":"ow_e","windowId":15,"app":{"name":"Finder","bundleId":"com.apple.finder"},"title":"Unassigned","isScratchpad":false}]}}}
@@ -193,6 +194,7 @@ import Testing
     #expect(snapshot[0].windows.map(\.id) == [11, 12, 13])
     #expect(snapshot[0].windows.map(\.reference) == ["ow_a", "ow_b", "ow_c"])
     #expect(snapshot[0].windows.map(\.title) == ["Docs", "", "Mail"])
+    #expect(snapshot[0].windows.map(\.isFocused) == [false, true, false])
     #expect(snapshot[0].windows.map(\.app.bundleID) == ["com.apple.Safari", "Ghostty", "com.apple.Safari"])
     #expect(snapshot[0].apps.map(\.name) == ["Ghostty", "Safari"])
     #expect(snapshot[1].windows.isEmpty)
