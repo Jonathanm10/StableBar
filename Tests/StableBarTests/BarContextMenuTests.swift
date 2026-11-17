@@ -151,9 +151,11 @@ private final class FakeMenuBarItem: @unchecked Sendable {
 }
 
 /// Right-clicks the item of a bar that shows `fake` and has `appMenu`, once the bar has laid it out.
-@MainActor private func rightClickItem(of fake: FakeMenuBarItem, with appMenu: AppMenu, then check: (BarStore) async throws -> Void) async throws {
+@MainActor private func rightClickItem(of fake: FakeMenuBarItem, with appMenu: AppMenu, inMenuBar: Bool = true,
+                                       then check: (BarStore) async throws -> Void) async throws {
     let fixture = try ThemeGalleryFixture(#"""
-    {"widgets":[{"id":"items","type":"menuBarItems","position":"left","shown":[{"app":"com.apple.dock"}],"hidden":["symbol"]}]}
+    {"widgets":[{"id":"items","type":"menuBarItems","position":"left","shown":[{"app":"com.apple.dock"}],"hidden":["symbol"],
+                 "rightClickInMenuBar":\#(inMenuBar)}]}
     """#)
     defer { fixture.close() }
     let store = try fixture.store(appMenu: appMenu)
@@ -194,6 +196,19 @@ private final class FakeMenuBarItem: @unchecked Sendable {
                                                                               width: CGDisplayBounds(display).width, height: fake.frame.height),
                                                      item: fake.frame)])
         #expect(!store.popup.isOpen, "The bar opens no menu of its own for the item")
+    }
+}
+
+@Test @MainActor func rightClickingAnItemWithoutAMenuPressesItUnlessTurnedOn() async throws {
+    let dock = try #require(NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first)
+    let fake = FakeMenuBarItem(owner: dock.processIdentifier, hasMenu: false)
+    let menuBar = FakeMenuBar(shown: true)
+    let appMenu = AppMenu(checkAccess: { true }, readAttribute: fake.read, sleep: { _ in await Task.yield() },
+                          menuBar: menuBar.visibility, mouse: menuBar.mouse)
+    try await rightClickItem(of: fake, with: appMenu, inMenuBar: false) { store in
+        for _ in 0..<20 { await Task.yield() }
+        #expect(menuBar.heldPolls == 3 && menuBar.steps.isEmpty, "Off by default: nothing is read from the menu bar and no click is sent")
+        #expect(!store.popup.isOpen)
     }
 }
 
