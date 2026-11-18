@@ -180,18 +180,86 @@ enum ConfigurationCompositionError: LocalizedError {
     }
 }
 
+/// A package's own templates get names of their own while loading, so another package's template of the same name
+/// can't change its widgets. `::` can't appear in a package ID.
+private func packageTemplatePrefix(_ package: String) -> String { "\(package)::" }
+
+private func unscopedTemplateName(_ name: String) -> String {
+    name.range(of: "::").map { String(name[$0.upperBound...]) } ?? name
+}
+
+/// Renames the templates a package defines, in its top level and its profiles, and marks its widgets' template
+/// references with the package, so they resolve as `resolvedTemplate` says.
+private func scopePackageTemplates(_ layer: inout ConfigurationLayer, package: String) throws {
+    let prefix = packageTemplatePrefix(package)
+    var profiles = try layer.values["profiles"]?.decoded([[String: ConfigurationValue]].self) ?? []
+    let profileDocuments = try profiles.map { try ($0["configuration"] ?? .object([:])).decoded([String: ConfigurationValue].self) }
+    var names = Set<String>()
+    for document in [layer.values] + profileDocuments {
+        if let templates = try document["templates"]?.decoded([String: ConfigurationValue].self) { names.formUnion(templates.keys) }
+    }
+    guard !names.isEmpty else { return }
+    func scope(_ document: [String: ConfigurationValue]) throws -> [String: ConfigurationValue] {
+        var document = document
+        if let templates = try document["templates"]?.decoded([String: ConfigurationValue].self) {
+            document["templates"] = .object(Dictionary(uniqueKeysWithValues: templates.map { (prefix + $0.key, $0.value) }))
+        }
+        if let widgets = try document["widgets"]?.decoded([[String: ConfigurationValue]].self) {
+            document["widgets"] = .array(widgets.map { definition in
+                var definition = definition
+                if case let .string(name)? = definition["template"], !name.hasPrefix("@token.") {
+                    definition["template"] = .string(prefix + name)
+                }
+                return .object(definition)
+            })
+        }
+        return document
+    }
+    layer.values = try scope(layer.values)
+    var pathPrefixes = ["templates."]
+    for index in profiles.indices {
+        profiles[index]["configuration"] = .object(try scope(profileDocuments[index]))
+        if case let .string(name)? = profiles[index]["name"] {
+            pathPrefixes.append("profiles.\(name).configuration.templates.")
+        }
+    }
+    if !profiles.isEmpty { layer.values["profiles"] = .array(profiles.map(ConfigurationValue.object)) }
+    func rename(_ path: String) -> String {
+        for pathPrefix in pathPrefixes where path.hasPrefix(pathPrefix) {
+            let rest = path.dropFirst(pathPrefix.count)
+            if names.contains(where: { rest == $0 || rest.hasPrefix($0 + ".") }) { return pathPrefix + prefix + rest }
+        }
+        return path
+    }
+    layer.origins = Dictionary(layer.origins.map { (rename($0.key), $0.value) }) { $1 }
+    layer.contributions = Dictionary(layer.contributions.map { (rename($0.key), $0.value) }) { $0 + $1 }
+}
+
+/// The template a reference names. A package's widget, and every template it inherits from, takes that package's
+/// template of a name when the package has one, and the shared template of that name otherwise.
+func resolvedTemplate(_ reference: String, scope: String?,
+                      templates: [String: [String: ConfigurationValue]]) -> (name: String, scope: String?) {
+    var (name, scope) = (reference, scope)
+    if let separator = reference.range(of: "::") {
+        (name, scope) = (String(reference[separator.upperBound...]), String(reference[..<separator.upperBound]))
+    }
+    if let scope, templates[scope + name] != nil { return (scope + name, scope) }
+    return (name, scope)
+}
+
 func expandWidgetTemplate(_ definition: [String: ConfigurationValue],
                           templates: [String: [String: ConfigurationValue]],
-                          path: [String] = []) throws -> [String: ConfigurationValue] {
+                          path: [String] = [], scope: String? = nil) throws -> [String: ConfigurationValue] {
     guard let reference = definition["template"] else { return definition }
-    let name = try reference.decoded(String.self)
+    let (name, scope) = resolvedTemplate(try reference.decoded(String.self), scope: scope, templates: templates)
     guard !path.contains(name) else {
         throw ConfigurationCompositionError.templateCycle(path + [name])
     }
     guard let template = templates[name] else {
         throw ConfigurationCompositionError.unknownTemplate(name)
     }
-    var expanded = try expandWidgetTemplate(template, templates: templates, path: path + [name]).merging(definition) { $1.overriding($0) }
+    var expanded = try expandWidgetTemplate(template, templates: templates, path: path + [name], scope: scope)
+        .merging(definition) { $1.overriding($0) }
     expanded["template"] = nil
     return expanded
 }
@@ -450,6 +518,10 @@ struct ConfigurationLoader: Sendable {
     private var packageBoundaries: [String: URL] = [:]
     private var packageNames: [String: String] = [:]
     private var packageIDs: [String: String] = [:]
+    /// The packages read so far, in load order.
+    private var packageOrder: [String] = []
+    /// The stored templates that make up each template name, in merge order (see `templateParts`).
+    private var templateLayers: [String: [String]] = [:]
     private var packageHosts: [String: [String]] = [:]
     private var essentialsPopupNames: [String: String] = [:]
 
@@ -515,6 +587,7 @@ struct ConfigurationLoader: Sendable {
         packageBoundaries = [:]
         packageNames = [:]
         packageIDs = [:]
+        packageOrder = []
         packageHosts = [:]
         widgetPackageNames = [:]
         widgetPackageIDs = [:]
@@ -640,7 +713,11 @@ struct ConfigurationLoader: Sendable {
         var originBudget = ConfigurationOriginPathBudget(shared: referenceExpansionBudget)
         let tokenSources = layer.origins
         try tokenOrigins(.object(beforeTokens), origins: tokenSources, tokens: tokens, into: &layer.origins, budget: &originBudget)
-        templates = try layer.values["templates"]?.decoded([String: [String: ConfigurationValue]].self) ?? [:]
+        let storedTemplates = try layer.values["templates"]?.decoded([String: [String: ConfigurationValue]].self) ?? [:]
+        templateLayers = templateParts(storedTemplates)
+        templates = templateLayers.mapValues { parts in
+            parts.reduce(into: [:]) { template, part in template.merge(storedTemplates[part]!) { $1.overriding($0) } }
+        }
         let overrides = try layer.values["widgetOverrides"]?.decoded([String: [String: ConfigurationValue]].self) ?? [:]
         let definitions = try layer.values["widgets"]!.decoded([[String: ConfigurationValue]].self)
         // A widget can inherit its id from a template.
@@ -770,30 +847,57 @@ struct ConfigurationLoader: Sendable {
 
     private func templateOrigins(_ definition: [String: ConfigurationValue],
                                  templates: [String: [String: ConfigurationValue]],
-                                 origins: ConfigurationPathIndex<ConfigurationOrigin>) throws -> [String: ConfigurationOrigin] {
+                                 origins: ConfigurationPathIndex<ConfigurationOrigin>,
+                                 scope: String? = nil) throws -> [String: ConfigurationOrigin] {
         guard let reference = definition["template"] else { return [:] }
-        let name = try reference.decoded(String.self)
-        var inherited = try templateOrigins(templates[name]!, templates: templates, origins: origins)
-        for (path, source) in origins["templates.\(name)"] {
-            inherited[path] = source.appending("(template \(name))")
+        let (name, scope) = resolvedTemplate(try reference.decoded(String.self), scope: scope, templates: templates)
+        var inherited = try templateOrigins(templates[name]!, templates: templates, origins: origins, scope: scope)
+        for part in templateLayers[name]! {
+            for (path, source) in origins["templates.\(part)"] {
+                inherited[path] = source.appending("(template \(unscopedTemplateName(name)))")
+            }
         }
         return inherited
     }
 
     private func templateContributions(_ definition: [String: ConfigurationValue],
                                        templates: [String: [String: ConfigurationValue]],
-                                       contributions: ConfigurationPathIndex<[ConfigurationContribution]>) throws -> [String: [ConfigurationContribution]] {
+                                       contributions: ConfigurationPathIndex<[ConfigurationContribution]>,
+                                       scope: String? = nil) throws -> [String: [ConfigurationContribution]] {
         guard let reference = definition["template"] else { return [:] }
-        let name = try reference.decoded(String.self)
-        var inherited = try templateContributions(templates[name]!, templates: templates, contributions: contributions)
-        for (path, entries) in contributions["templates.\(name)"] {
-            inherited[path, default: []] += entries.map {
-                var entry = $0
-                entry.origin = entry.origin.appending("(template \(name))")
-                return entry
+        let (name, scope) = resolvedTemplate(try reference.decoded(String.self), scope: scope, templates: templates)
+        var inherited = try templateContributions(templates[name]!, templates: templates, contributions: contributions, scope: scope)
+        for part in templateLayers[name]! {
+            for (path, entries) in contributions["templates.\(part)"] {
+                inherited[path, default: []] += entries.map {
+                    var entry = $0
+                    entry.origin = entry.origin.appending("(template \(unscopedTemplateName(name)))")
+                    return entry
+                }
             }
         }
         return inherited
+    }
+
+    /// The stored templates behind each template name, in merge order. A package's own template comes first, then a template
+    /// of the same name from your own files. A name your own widgets use takes every package's template of that name first.
+    private func templateParts(_ stored: [String: [String: ConfigurationValue]]) -> [String: [String]] {
+        var packaged: [String: [String]] = [:]
+        var parts: [String: [String]] = [:]
+        for package in packageOrder {
+            for name in stored.keys where name.hasPrefix(packageTemplatePrefix(package)) {
+                let shared = unscopedTemplateName(name)
+                parts[name] = [name] + (stored[shared] == nil ? [] : [shared])
+                packaged[shared, default: []].append(name)
+            }
+        }
+        for name in stored.keys where parts[name] == nil {
+            parts[name] = (packaged[name] ?? []) + [name]
+        }
+        for (name, names) in packaged where parts[name] == nil {
+            parts[name] = names
+        }
+        return parts
     }
 
     private mutating func read(_ url: URL, data: Data? = nil, path: [URL], boundary: URL? = nil) throws -> ConfigurationLayer {
@@ -866,6 +970,8 @@ struct ConfigurationLoader: Sendable {
         try validateSecretReferences(.object(layer.values), package: manifest.id)
         try validatePackageHosts(layer.values, manifest: manifest)
         layer.values = try preparePackageDocument(layer.values, directory: directory)
+        try scopePackageTemplates(&layer, package: manifest.id)
+        packageOrder.append(manifest.id)
         for source in layer.origins.values {
             packageNames[source.file] = manifest.name
             packageIDs[source.file] = manifest.id
