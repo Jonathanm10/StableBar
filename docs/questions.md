@@ -148,4 +148,4 @@ Use **Settings → General → Uninstall → Uninstall…**, which lists each st
 
 Your `~/.config/stablebar` folder, with your configuration, scripts and packages, stays unless you check **Also move ~/.config/stablebar to the Trash**.
 
-If Homebrew installed StableBar, run **Uninstall** first and click **Quit StableBar**, then run `brew uninstall --cask stablebar`; `brew uninstall --zap --cask stablebar` does both and also deletes `~/.config/stablebar`. See [Uninstall](getting-started.md#uninstall).
+If Homebrew installed StableBar, run **Uninstall** first and click **Quit StableBar**, then run `brew uninstall --cask stablebar`, or `brew uninstall --zap --cask stablebar` to also delete `~/.config/stablebar`. Homebrew alone only removes files, so it leaves the menu bar's auto-hide, Open at login and permissions as they are. See [Uninstall](getting-started.md#uninstall).
