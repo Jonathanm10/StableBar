@@ -705,11 +705,11 @@ enum SceneRenderer {
     /// The Uninstall sheet, confirming or listing the step that failed: the password prompt for the command, cancelled.
     private static func uninstallSheet(_ scene: SceneFile, store: BarStore) -> some View {
         let snapshot = uninstallSample
-        let failed = scene.uninstall == .failed
         let outcomes = snapshot.stepsBeforeQuit(UninstallOptions(snapshot)).map { step in
             UninstallOutcome(step: step, error: step == .command(snapshot.commands[0]) ? "Cancelled." : nil)
         }
-        return UninstallSheet(store: store, snapshot: snapshot, outcomes: failed ? outcomes : nil, finishing: failed)
+        let phase: UninstallFlow.Phase = scene.uninstall == .failed ? .finished(outcomes, finishing: true) : .confirming
+        return UninstallSheet(controller: UninstallController(store: store, flow: UninstallFlow(snapshot: snapshot, phase: phase)))
             .frame(maxHeight: .infinity, alignment: .top)
             .background(SettingsPalette.background)
     }
