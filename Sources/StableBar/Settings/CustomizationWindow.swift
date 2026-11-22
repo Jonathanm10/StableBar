@@ -574,26 +574,9 @@ struct StyleFields {
 
     private func choiceMenu<Choices: View>(_ title: String, selection: Binding<String>, selectedTitle: String,
                                           @ViewBuilder choices: () -> Choices) -> some View {
-        Menu {
+        SettingsMenu(title: title, selectedTitle: selectedTitle) {
             Picker(title, selection: selection, content: choices).pickerStyle(.inline)
-        } label: {
-            HStack(spacing: 7) {
-                Text(selectedTitle).lineLimit(1)
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold)).foregroundStyle(.secondary)
-            }
-            .font(.callout)
-            .padding(.horizontal, 10)
-            .frame(width: FillButton.sideWidth, height: 24)
-            .background(SettingsPalette.control, in: RoundedRectangle(cornerRadius: 6))
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(SettingsPalette.groupBorder))
-            .contentShape(RoundedRectangle(cornerRadius: 6))
         }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .accessibilityLabel(title)
-        .accessibilityValue(selectedTitle)
     }
 
     func stringBinding(_ key: String, default fallback: String) -> Binding<String> {

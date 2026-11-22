@@ -1,4 +1,5 @@
 import Foundation
+import os
 @testable import StableBar
 import Testing
 
@@ -80,5 +81,34 @@ import Testing
         let installed = WorkspaceSource.installed(path: folder.path)
         #expect(installed.contains(.yabai))
         #expect(installed.isDisjoint(with: [.aerospace, .rift, .spaces]))
+    }
+
+    @Test @MainActor func finderReportsWhatTheLookupFinds() async throws {
+        let finder = WorkspaceManagerFinder(lookup: { [.yabai] })
+        finder.send(.rescan)
+        #expect(finder.scan.isScanning)
+        try await awaitCondition { finder.scan.found == [.yabai] }
+        #expect(!finder.scan.isScanning)
+    }
+
+    @Test @MainActor func finderDisablesRescanUntilTheLookupReturns() async throws {
+        let calls = OSAllocatedUnfairLock(initialState: 0)
+        let release = DispatchSemaphore(value: 0)
+        let finder = WorkspaceManagerFinder(lookup: {
+            calls.withLock { $0 += 1 }
+            release.wait()
+            return [.rift]
+        })
+        finder.send(.rescan)
+        finder.send(.rescan)
+        finder.send(.rescan)
+        release.signal()
+        try await awaitCondition { finder.scan.found != nil }
+        #expect(calls.withLock { $0 } == 1)
+        #expect(finder.scan.found == [.rift])
+    }
+
+    @Test func searchFindsTheWorkspaceManagerByRescan() {
+        #expect(SettingsSearchResult.workspaces.matches("rescan"))
     }
 }
