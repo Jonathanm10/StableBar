@@ -439,12 +439,7 @@ enum SceneRenderer {
             try await OffscreenSnapshot.write(BarLinkReview(candidate: candidate, store: store).background(Color(nsColor: .windowBackgroundColor)),
                                               size: NSSize(width: 540, height: CGFloat(scene.height ?? 540)), dark: dark, to: url)
         case .accessibilityGuide:
-            let icon = Bundle.main.url(forResource: "AppIcon", withExtension: "icns").flatMap(NSImage.init(contentsOf:)).flatMap { image in
-                var rect = NSRect(x: 0, y: 0, width: 256, height: 256)
-                image.size = rect.size
-                return image.cgImage(forProposedRect: &rect, context: nil, hints: nil).map { NSImage(cgImage: $0, size: rect.size) }
-            }
-            try await OffscreenSnapshot.write(AccessibilityGuideView(icon: icon ?? NSApp.applicationIconImage) {}
+            try await OffscreenSnapshot.write(AccessibilityGuideView {}
                 .padding(24).background(Color(nsColor: .windowBackgroundColor)),
                                               size: NSSize(width: CGFloat(scene.width ?? 408), height: CGFloat(scene.height ?? 181)), dark: dark, to: url)
         case .share, .shareLink:

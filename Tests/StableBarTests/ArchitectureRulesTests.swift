@@ -52,6 +52,32 @@ private func swiftSources() throws -> [(path: String, text: String)] {
     }
 }
 
+/// Whether `code` draws the icon macOS looks up for this copy of the app.
+private func looksUpTheIcon(_ code: String) -> Bool {
+    // Unicode word boundaries would make `NSApp.applicationIconImage` one word.
+    code.contains(#/\b(applicationIconImage|applicationIconName)\b/#.wordBoundaryKind(.simple))
+}
+
+/// macOS looks StableBar's icon up for each copy of the app and can pick other artwork in each, so the two builds CI
+/// draws screens from would differ. Every view draws the bundled artwork from `StableBarIcon`.
+@Test func stableBarIconHasOneSource() throws {
+    let files = try swiftSources()
+    #expect(files.count > 100)
+    for file in files where file.path != "StableBar/App/StableBarIcon.swift" {
+        #expect(!looksUpTheIcon(code(file.text)), """
+            \(file.path) draws the icon macOS looks up, which can change between two copies of the app: draw \
+            StableBarIcon.image (#895)
+            """)
+    }
+}
+
+@Test func theIconCheckFindsTheIconMacOSLooksUp() {
+    #expect(looksUpTheIcon(code("Image(nsImage: NSApp.applicationIconImage)")))
+    #expect(looksUpTheIcon(code("NSImage(named: NSImage.applicationIconName)")))
+    #expect(!looksUpTheIcon(code("Image(nsImage: StableBarIcon.image) // not NSApp.applicationIconImage")))
+    #expect(!looksUpTheIcon(code("let applicationIconImages = 0")))
+}
+
 /// What a `StateMachine`'s code may not use: a UI framework, work that runs later, or the clock, the disk and the
 /// system, which belong to the owner that performs its effects.
 private let stateMachineReaches: [(pattern: String, name: String)] = [
