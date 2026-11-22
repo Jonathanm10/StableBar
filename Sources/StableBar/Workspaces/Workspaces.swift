@@ -324,7 +324,7 @@ final class WorkspaceStore {
         let source = source
         let title = source.title
         if let bundleID = source.bundleID {
-            launchWatch = watchLaunches(bundleID) { [weak self] in self?.start() }
+            launchWatch = watchLaunches(bundleID) { [weak self] in self?.reconnect() }
         }
         task = Task {
             var failures = 0

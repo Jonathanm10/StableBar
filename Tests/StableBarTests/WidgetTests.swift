@@ -539,6 +539,23 @@ private func calls(_ log: URL) -> [Substring] {
     try await awaitCondition { calls(fixture.log).filter { $0.hasPrefix("subscribe") }.count == 2 }
 }
 
+@Test @MainActor func aLaunchAfterTheStoreStopsStartsNothing() async throws {
+    let fixture = try omniwmFixture("exit 1")
+    defer { fixture.store.stop(); try? FileManager.default.removeItem(at: fixture.directory) }
+    var launched: [String: @MainActor @Sendable () -> Void] = [:]
+    fixture.store.watchLaunches = { bundleID, handler in launched[bundleID] = handler; return NSObject() }
+    fixture.store.log = { _ in }
+    fixture.store.configure(source: .kiwidesk, workspaces: true, mode: false)
+    try await awaitCondition { calls(fixture.log).contains { $0.hasPrefix("subscribe") } }
+    fixture.store.stop()
+    // A launch the watch saw just before the store stopped arrives after it.
+    launched[kiwideskBundleID]?()
+    #expect(!fixture.store.isRunning)
+    // Only checks that no subscription starts.
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(calls(fixture.log).filter { $0.hasPrefix("subscribe") }.count == 1)
+}
+
 @Test @MainActor func kiwideskSubscriptionFailureShowsAndRetries() async throws {
     let fixture = try omniwmFixture("""
     case "$1" in
