@@ -150,9 +150,9 @@ private final class FakeMenuBarItem: @unchecked Sendable {
     #expect(store.popup.isOpen, "A click still reaches the item beneath the view that takes right-clicks")
 }
 
-/// Right-clicks the item of a bar that shows `fake` and has `appMenu`, once the bar has laid it out.
-@MainActor private func rightClickItem(of fake: FakeMenuBarItem, with appMenu: AppMenu, inMenuBar: Bool = true,
-                                       then check: (BarStore) async throws -> Void) async throws {
+/// Clicks the item of a bar that shows `fake` and has `appMenu` with `button`, once the bar has laid it out.
+@MainActor private func click(_ button: CGMouseButton, itemOf fake: FakeMenuBarItem, with appMenu: AppMenu, inMenuBar: Bool = true,
+                              then check: (BarStore) async throws -> Void) async throws {
     let fixture = try ThemeGalleryFixture(#"""
     {"widgets":[{"id":"items","type":"menuBarItems","position":"left","shown":[{"app":"com.apple.dock"}],"hidden":["symbol"],
                  "rightClickInMenuBar":\#(inMenuBar)}]}
@@ -173,7 +173,13 @@ private final class FakeMenuBarItem: @unchecked Sendable {
     }
     let capture = try #require(found)
     let center = bar.host.convert(CGPoint(x: capture.bounds.midX, y: capture.bounds.midY), from: capture)
-    capture.rightMouseDown(with: try #require(bar.rightMouseDown(at: center)))
+    if button == .left {
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            bar.window.sendEvent(try #require(bar.mouseEvent(type, at: center)))
+        }
+    } else {
+        capture.rightMouseDown(with: try #require(bar.rightMouseDown(at: center)))
+    }
     try await check(store)
 }
 
@@ -183,30 +189,64 @@ private final class FakeMenuBarItem: @unchecked Sendable {
     let menuBar = FakeMenuBar(shown: true)
     let appMenu = AppMenu(checkAccess: { true }, readAttribute: fake.read, sleep: { _ in await Task.yield() },
                           menuBar: menuBar.visibility, mouse: menuBar.mouse)
-    try await rightClickItem(of: fake, with: appMenu) { store in
+    try await click(.right, itemOf: fake, with: appMenu) { store in
         try await awaitCondition { menuBar.steps.contains("click") }
         #expect(menuBar.heldPollsAtClick == [-1], "The right-click goes out only once the right button is up")
         let display = try #require(store.appMenu.menuBarItems.first?.entry.menuBarDisplay)
         #expect(menuBar.windowDisplays == [display], "The click goes to MenuBarAgent's window for the item's display")
-        #expect(menuBar.clicks == [FakeMenuBar.Click(point: CGPoint(x: fake.frame.midX, y: fake.frame.midY), window: FakeMenuBar.window)],
+        #expect(menuBar.clicks == [FakeMenuBar.Click(point: CGPoint(x: fake.frame.midX, y: fake.frame.midY), window: FakeMenuBar.window,
+                                                     button: .right)],
                 "The right-click goes to MenuBarAgent, for the middle of the item in the menu bar")
         #expect(menuBar.steps == ["click"], "A menu bar that shows is clicked as it is")
         #expect(!store.popup.isOpen, "The bar opens no menu of its own for the item")
     }
 }
 
-@Test @MainActor func rightClickingAnItemWithoutAMenuPressesItUnlessTurnedOn() async throws {
+@Test @MainActor func rightClickingAnItemWithoutAMenuClicksItUnlessTurnedOn() async throws {
     let dock = try #require(NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first)
     let fake = FakeMenuBarItem(owner: dock.processIdentifier, hasMenu: false)
     let menuBar = FakeMenuBar(shown: true)
     let appMenu = AppMenu(checkAccess: { true }, readAttribute: fake.read, sleep: { _ in await Task.yield() },
                           menuBar: menuBar.visibility, mouse: menuBar.mouse)
-    try await rightClickItem(of: fake, with: appMenu, inMenuBar: false) { store in
-        try await awaitCondition { menuBar.showsChecks == 1 }
+    try await click(.right, itemOf: fake, with: appMenu, inMenuBar: false) { store in
+        try await awaitCondition { menuBar.steps.contains("click") }
         for _ in 0..<20 { await Task.yield() }
-        #expect(menuBar.showsChecks == 1, "The item gets one press, as on a click")
-        #expect(menuBar.heldPolls == 3 && menuBar.steps.isEmpty, "Off by default: nothing is read from the menu bar and no click is sent")
+        #expect(menuBar.clicks.map(\.button) == [.left], "Off by default: the item gets one click, as on a click")
+        #expect(menuBar.heldPolls == 3, "Nothing waits for the right button to come up")
         #expect(!store.popup.isOpen)
+    }
+}
+
+/// SwiftUI's menu bar extras that open a window ignore a press through Accessibility, so the item gets a real click.
+@Test @MainActor func clickingAnItemWithoutAMenuOnTheBarClicksItInTheMenuBar() async throws {
+    let dock = try #require(NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first)
+    let fake = FakeMenuBarItem(owner: dock.processIdentifier, hasMenu: false)
+    let menuBar = FakeMenuBar(shown: true)
+    let appMenu = AppMenu(checkAccess: { true }, readAttribute: fake.read, sleep: { _ in await Task.yield() },
+                          menuBar: menuBar.visibility, mouse: menuBar.mouse)
+    try await click(.left, itemOf: fake, with: appMenu) { store in
+        try await awaitCondition { menuBar.steps.contains("click") }
+        let display = try #require(store.appMenu.menuBarItems.first?.entry.menuBarDisplay)
+        #expect(menuBar.windowDisplays == [display], "The click goes to MenuBarAgent's window for the item's display")
+        #expect(menuBar.clicks == [FakeMenuBar.Click(point: CGPoint(x: fake.frame.midX, y: fake.frame.midY), window: FakeMenuBar.window,
+                                                     button: .left)],
+                "A left click goes to MenuBarAgent, for the middle of the item in the menu bar")
+        #expect(menuBar.heldPolls == 3, "The click goes out on the press, without waiting for a button")
+        #expect(menuBar.steps == ["click"], "A menu bar that shows is clicked as it is")
+        #expect(!store.popup.isOpen, "The bar opens no menu of its own for the item")
+    }
+}
+
+@Test @MainActor func aHiddenMenuBarIsRevealedTransparentForTheClick() async throws {
+    let dock = try #require(NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first)
+    let fake = FakeMenuBarItem(owner: dock.processIdentifier, hasMenu: false)
+    let menuBar = FakeMenuBar(shown: false)
+    let appMenu = AppMenu(checkAccess: { true }, readAttribute: fake.read, sleep: { _ in await Task.yield() },
+                          menuBar: menuBar.visibility, mouse: menuBar.mouse)
+    try await click(.left, itemOf: fake, with: appMenu) { _ in
+        try await awaitCondition { menuBar.steps.last == "visible" }
+        #expect(menuBar.steps == ["transparent", "revealed", "click", "hidden", "visible"])
+        #expect(menuBar.clicks.map(\.button) == [.left])
     }
 }
 
@@ -218,7 +258,7 @@ private final class FakeMenuBarItem: @unchecked Sendable {
     let menuBar = FakeMenuBar(shown: false)
     let appMenu = AppMenu(checkAccess: { true }, readAttribute: fake.read, sleep: { _ in await Task.yield() },
                           menuBar: menuBar.visibility, mouse: menuBar.mouse)
-    try await rightClickItem(of: fake, with: appMenu) { _ in
+    try await click(.right, itemOf: fake, with: appMenu) { _ in
         try await awaitCondition { menuBar.steps.last == "visible" }
         #expect(menuBar.steps == ["transparent", "revealed", "click", "hidden", "visible"])
     }
@@ -230,19 +270,21 @@ private final class FakeMenuBarItem: @unchecked Sendable {
     let menuBar = FakeMenuBar(shown: true, window: nil)
     let appMenu = AppMenu(checkAccess: { true }, readAttribute: fake.read, sleep: { _ in await Task.yield() },
                           menuBar: menuBar.visibility, mouse: menuBar.mouse)
-    try await rightClickItem(of: fake, with: appMenu) { _ in
+    try await click(.right, itemOf: fake, with: appMenu) { _ in
         try await awaitCondition { menuBar.heldPolls < 0 }
         for _ in 0..<20 { await Task.yield() }
         #expect(menuBar.steps.isEmpty, "Without MenuBarAgent's window no click is sent")
     }
 }
 
-@Test func aRightClickForMenuBarAgentNamesItsWindow() throws {
+@Test(arguments: [(CGMouseButton.left, [CGEventType.leftMouseDown, .leftMouseUp]), (.right, [.rightMouseDown, .rightMouseUp])])
+func aClickForMenuBarAgentNamesItsWindow(button: CGMouseButton, types: [CGEventType]) throws {
     let field = try #require(PrivateAPI.eventWindowField)
     try #require(PrivateAPI.setEventWindowLocation != nil)
     let window = MenuBarWindow(agent: 77, number: 4242, frame: CGRect(x: 1000, y: 0, width: 800, height: 33))
-    let events = menuBarRightClick(at: CGPoint(x: 1300, y: 14), in: window)
-    #expect(events.map(\.type) == [.rightMouseDown, .rightMouseUp])
+    let events = menuBarClick(at: CGPoint(x: 1300, y: 14), in: window, button: button)
+    #expect(events.map(\.type) == types)
+    #expect(events.map { $0.getIntegerValueField(.mouseEventButtonNumber) } == Array(repeating: Int64(button.rawValue), count: 2))
     #expect(events.map { $0.getIntegerValueField(field) } == [4242, 4242])
     #expect(events.map(\.location) == [CGPoint(x: 1300, y: 14), CGPoint(x: 1300, y: 14)])
     #expect(events.map { $0.getIntegerValueField(.mouseEventClickState) } == [1, 1])
@@ -276,6 +318,7 @@ private final class FakeMenuBar: @unchecked Sendable {
     struct Click: Equatable {
         let point: CGPoint
         let window: MenuBarWindow
+        let button: CGMouseButton
     }
 
     static let window = MenuBarWindow(agent: 77, number: 4242, frame: CGRect(x: 0, y: 0, width: 1512, height: 33))
@@ -330,10 +373,10 @@ private final class FakeMenuBar: @unchecked Sendable {
                 self.looked.append(display)
                 return self.window
             }
-        }, rightClick: { point, window in
+        }, click: { point, window, button in
             self.lock.withLock {
                 self.recorded.append("click")
-                self.clicked.append(Click(point: point, window: window))
+                self.clicked.append(Click(point: point, window: window, button: button))
                 self.heldAtClick.append(self.held)
             }
         })
