@@ -1117,7 +1117,7 @@ private struct RelayProbe {
     #expect(registry.permissions(for: try configuration(#"""
     {"workspaceSource":"spaces","widgets":[{"id":"spaces","type":"workspaces","position":"left","enabled":false}]}
     """#)).isEmpty)
-    for source in ["aerospace", "yabai", "omniwm", "rift"] {
+    for source in ["aerospace", "yabai", "omniwm", "rift", "kiwidesk"] {
         #expect(registry.permissions(for: try configuration(#"""
         {"workspaceSource":"\#(source)","widgets":[{"id":"spaces","type":"workspaces","position":"left"}]}
         """#)).isEmpty)

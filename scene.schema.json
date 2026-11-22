@@ -231,7 +231,7 @@
     "workspaceManagers": {
       "description": "The window managers Settings General finds on this Mac, whatever the Mac that draws has. Every one by default. macOS Spaces is always listed.",
       "type": "array",
-      "items": { "enum": ["aerospace", "yabai", "omniwm", "rift"] },
+      "items": { "enum": ["aerospace", "yabai", "omniwm", "rift", "kiwidesk"] },
       "uniqueItems": true
     },
     "shareScreen": {

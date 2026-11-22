@@ -477,7 +477,7 @@ private func calls(_ log: URL) -> [Substring] {
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
-    for name in ["yabai", "omniwmctl", "rift-cli"] {
+    for name in ["yabai", "omniwmctl", "rift-cli", "kiwidesk"] {
         FileManager.default.createFile(atPath: directory.appending(path: name).path, contents: Data("#!/bin/sh\n".utf8),
                                        attributes: [.posixPermissions: 0o700])
     }
@@ -487,6 +487,7 @@ private func calls(_ log: URL) -> [Substring] {
     #expect(WorkspaceSource.detected(path: path, configured: nil, running: { $0 == .aerospace }) == .spaces)
     #expect(WorkspaceSource.detected(path: path, configured: nil, running: { $0 == .omniwm }) == .omniwm)
     #expect(WorkspaceSource.detected(path: path, configured: nil, running: { $0 == .rift }) == .rift)
+    #expect(WorkspaceSource.detected(path: path, configured: nil, running: { $0 == .kiwidesk }) == .kiwidesk)
     #expect(WorkspaceSource.detected(path: path, configured: nil, running: { _ in true }) == .yabai)
     // A source the configuration names stays while it's installed, running or not.
     #expect(WorkspaceSource.detected(path: path, configured: .omniwm, running: { _ in false }) == .omniwm)
@@ -494,6 +495,8 @@ private func calls(_ log: URL) -> [Substring] {
     #expect(WorkspaceSource.detected(path: path, configured: .aerospace, running: { $0 == .yabai }) == .yabai)
     #expect(WorkspaceSource.omniwm.executable(path: path) == directory.appending(path: "omniwmctl").path)
     #expect(WorkspaceSource.rift.executable(path: path) == directory.appending(path: "rift-cli").path)
+    #expect(WorkspaceSource.kiwidesk.executable(path: path) == directory.appending(path: "kiwidesk").path)
+    #expect(WorkspaceSource.windowManagers.last == .kiwidesk)
 }
 
 @Test func aProcessCountsAsRunningOnlyWhileItRunsForThisUser() throws {
