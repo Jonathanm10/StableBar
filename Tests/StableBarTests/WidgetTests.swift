@@ -521,6 +521,24 @@ private func calls(_ log: URL) -> [Substring] {
     #expect(Array(made.dropFirst(2).prefix(3)) == ["focus_window 11", "focus_space 2", "move_to_space 2 11"])
 }
 
+@Test @MainActor func aWindowManagerThatLaunchesReconnectsAtOnce() async throws {
+    let fixture = try omniwmFixture("""
+    [ "$1" = subscribe ] && exit 1
+    exit 1
+    """)
+    defer { fixture.store.stop(); try? FileManager.default.removeItem(at: fixture.directory) }
+    var launched: [String: @MainActor @Sendable () -> Void] = [:]
+    fixture.store.watchLaunches = { bundleID, handler in launched[bundleID] = handler; return NSObject() }
+    fixture.store.log = { _ in }
+    fixture.store.configure(source: .kiwidesk, workspaces: true, mode: false)
+    try await awaitCondition { fixture.store.connectionError != nil }
+    // The fixture waits 30 seconds between attempts, so a second subscribe now comes from the launch.
+    try #require(calls(fixture.log).filter { $0.hasPrefix("subscribe") }.count == 1)
+    try #require(launched[kiwideskBundleID] != nil)
+    launched[kiwideskBundleID]?()
+    try await awaitCondition { calls(fixture.log).filter { $0.hasPrefix("subscribe") }.count == 2 }
+}
+
 @Test @MainActor func kiwideskSubscriptionFailureShowsAndRetries() async throws {
     let fixture = try omniwmFixture("""
     case "$1" in

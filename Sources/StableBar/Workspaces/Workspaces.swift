@@ -239,6 +239,15 @@ final class WorkspaceStore {
     private(set) var mode: String?
     /// Injectable executable lookup lets lifecycle tests use a scratch event stream.
     var executablePath: (() throws -> String)?
+    /// Watches for an app's launch while the store keeps the returned token. macOS posts no launch notification
+    /// for a menu bar app, such as KiwiDesk, so this watches the running apps instead.
+    var watchLaunches: (_ bundleID: String, _ launched: @escaping @MainActor @Sendable () -> Void) -> AnyObject = { bundleID, launched in
+        NSWorkspace.shared.observe(\.runningApplications, options: [.old, .new]) { _, change in
+            let lists = { (apps: [NSRunningApplication]?) in apps?.contains { $0.bundleIdentifier == bundleID } == true }
+            guard lists(change.newValue), !lists(change.oldValue) else { return }
+            DispatchQueue.main.async { MainActor.assumeIsolated { launched() } }
+        }
+    }
     /// Where diagnostics go, such as how a subscription ended; tests read them instead.
     var log: (String) -> Void = { FileHandle.standardError.write(Data("StableBar: \($0)\n".utf8)) }
     private(set) var tracksWorkspaces = true
@@ -258,6 +267,7 @@ final class WorkspaceStore {
     private var task: Task<Void, Never>?
     private var process: Process?
     private var observers: [NSObjectProtocol] = []
+    private var launchWatch: AnyObject?
     private var activationObserver: NSObjectProtocol?
     private let notificationCenter: NotificationCenter
     private let workspaceNotificationCenter: NotificationCenter
@@ -314,12 +324,7 @@ final class WorkspaceStore {
         let source = source
         let title = source.title
         if let bundleID = source.bundleID {
-            observers = [workspaceNotificationCenter.addObserver(
-                forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main) { [weak self] notification in
-                guard (notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleIdentifier
-                        == bundleID else { return }
-                MainActor.assumeIsolated { self?.start() }
-            }]
+            launchWatch = watchLaunches(bundleID) { [weak self] in self?.start() }
         }
         task = Task {
             var failures = 0
@@ -702,6 +707,7 @@ final class WorkspaceStore {
         process = nil
         for observer in observers { workspaceNotificationCenter.removeObserver(observer) }
         observers = []
+        launchWatch = nil
         if let activationObserver { notificationCenter.removeObserver(activationObserver) }
         activationObserver = nil
     }
