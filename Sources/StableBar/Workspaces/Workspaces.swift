@@ -113,6 +113,13 @@ enum WorkspaceSource: String, Codable, Sendable {
         return bundled
     }
 
+    static let windowManagers: [WorkspaceSource] = [.aerospace, .yabai, .omniwm, .rift]
+
+    /// The window managers whose command is on `path`, or inside OmniWM's app.
+    static func installed(path: String) -> Set<WorkspaceSource> {
+        Set(windowManagers.filter { $0.executable(path: path) != nil })
+    }
+
     /// Whether the manager runs for this user: AeroSpace's or OmniWM's app, or the yabai or Rift service. Spaces always does.
     var isRunning: Bool {
         switch self {
