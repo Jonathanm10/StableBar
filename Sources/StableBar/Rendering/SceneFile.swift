@@ -96,6 +96,8 @@ struct SceneFile: Decodable {
     enum ApplicationMove: String, Decodable, CaseIterable { case ready, replace, useExisting, failed, moving, setupOpen }
     /// The window manager whose windows start under the bar, which setup's last step and Settings → General warn about.
     var windowsUnderBar: WorkspaceSource?
+    /// The window managers Settings General finds; every one when nil, whatever the Mac that draws has.
+    var workspaceManagers: [WorkspaceSource]?
     /// The screen Share My Bar draws the bar on.
     var shareScreen = BarShareScreen.this
     /// The shape of the image Share My Bar draws.
@@ -110,7 +112,7 @@ struct SceneFile: Decodable {
 
     enum CodingKeys: String, CodingKey, CaseIterable {
         case configuration, packages, packageOrigins, outputs, history, workspaces, windows, yabaiSpaces, yabaiWindows, yabaiApps, focusedWindow, dockBadges, desktopShortcuts, activeApp, menu, mixer, draw, widget, group, view, section, tab, package, uninstall,
-             themeLink, barLink, untickedWidgets, starRequest, setup, applicationMove, windowsUnderBar, shareScreen, sharePreset, macOSMajorVersion, appearances,
+             themeLink, barLink, untickedWidgets, starRequest, setup, applicationMove, windowsUnderBar, workspaceManagers, shareScreen, sharePreset, macOSMajorVersion, appearances,
              accessibilityDisplay, width, height
     }
 
@@ -262,6 +264,17 @@ struct SceneFile: Decodable {
         if windowsUnderBar != nil, draw != .setup && !(draw == .settings && section == .general) {
             throw DecodingError.dataCorruptedError(forKey: .windowsUnderBar, in: values,
                 debugDescription: "windowsUnderBar draws setup or Settings General.")
+        }
+        workspaceManagers = try values.decodeIfPresent([WorkspaceSource].self, forKey: .workspaceManagers)
+        if let workspaceManagers {
+            if draw != .settings || section != .general || widget != nil {
+                throw DecodingError.dataCorruptedError(forKey: .workspaceManagers, in: values,
+                    debugDescription: "workspaceManagers draws Settings General.")
+            }
+            if workspaceManagers.contains(.spaces) {
+                throw DecodingError.dataCorruptedError(forKey: .workspaceManagers, in: values,
+                    debugDescription: "workspaceManagers lists window managers; macOS Spaces is always listed.")
+            }
         }
         shareScreen = try values.decodeIfPresent(BarShareScreen.self, forKey: .shareScreen) ?? .this
         if values.contains(.shareScreen), draw != .share && draw != .shareLink {

@@ -415,6 +415,7 @@ enum SceneRenderer {
                 .environment(\.feedbackSample, feedbackSample)
                 .environment(\.starRequestSample, (scene.starRequest ?? .repository).state)
                 .environment(\.calendarsSample, calendarsSample)
+                .environment(\.workspaceManagersSample, Set(scene.workspaceManagers ?? WorkspaceSource.windowManagers))
             try await OffscreenSnapshot.write(drawn(settings, with: []),
                                               size: NSSize(width: CGFloat(scene.width ?? 1080), height: CGFloat(scene.height ?? 760)),
                                               dark: dark, ready: {

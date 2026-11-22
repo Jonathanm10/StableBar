@@ -298,6 +298,36 @@ struct TextDraft<Content: View>: View {
     }
 }
 
+/// A pop-up menu button that shows `selectedTitle`, as Settings' choice menus draw it.
+struct SettingsMenu<Content: View>: View {
+    let title: String
+    let selectedTitle: String
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        Menu {
+            content
+        } label: {
+            HStack(spacing: 7) {
+                Text(selectedTitle).lineLimit(1)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold)).foregroundStyle(.secondary)
+            }
+            .font(.callout)
+            .padding(.horizontal, 10)
+            .frame(width: FillButton.sideWidth, height: 24)
+            .background(SettingsPalette.control, in: RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(SettingsPalette.groupBorder))
+            .contentShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .accessibilityLabel(title)
+        .accessibilityValue(selectedTitle)
+    }
+}
+
 struct SettingsSegments<Value: Hashable>: View {
     @Binding var selection: Value
     let options: [(Value, String)]

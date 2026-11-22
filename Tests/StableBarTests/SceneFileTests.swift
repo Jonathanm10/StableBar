@@ -232,6 +232,21 @@ func sceneRejectsASetupItCannotDraw(json: String) {
     #expect(throws: (any Error).self) { try scene(#"{"configuration": {"widgets": []}, \#(json)}"#) }
 }
 
+@Test func sceneListsTheWindowManagersGeneralFinds() throws {
+    let decoded = try scene(#"{"configuration": {}, "draw": "settings", "section": "general", "workspaceManagers": ["yabai"]}"#)
+    #expect(decoded.workspaceManagers == [.yabai])
+}
+
+@Test func workspaceManagersDrawsSettingsGeneral() {
+    #expect(throws: (any Error).self) { try scene(#"{"configuration": {}, "draw": "bar", "workspaceManagers": ["yabai"]}"#) }
+    #expect(throws: (any Error).self) {
+        try scene(#"{"configuration": {}, "draw": "settings", "section": "general", "workspaceManagers": ["spaces"]}"#)
+    }
+    #expect(throws: (any Error).self) {
+        try scene(#"{"configuration": {}, "draw": "settings", "section": "general", "widget": "clock", "workspaceManagers": ["yabai"]}"#)
+    }
+}
+
 @Test func sceneSchemaListsTheSamePropertiesAsTheDecoder() throws {
     let schema = try JSONDecoder().decode([String: ConfigurationValue].self,
                                           from: Data(contentsOf: repository.appending(path: "scene.schema.json")))
@@ -252,6 +267,7 @@ func sceneRejectsASetupItCannotDraw(json: String) {
     #expect(choices(properties["accessibilityDisplay"]) == Set(SceneFile.AccessibilityDisplay.allCases.map(\.rawValue)))
     #expect(choices(properties["starRequest"]) == Set(SceneFile.StarRequestLine.allCases.map(\.rawValue)))
     #expect(choices(properties["applicationMove"]) == Set(SceneFile.ApplicationMove.allCases.map(\.rawValue)))
+    #expect(choices(properties["workspaceManagers"]) == Set(WorkspaceSource.windowManagers.map(\.rawValue)))
     guard case let .object(setup)? = properties["setup"], case let .object(setupProperties)? = setup["properties"] else {
         Issue.record("scene.schema.json describes no setup properties"); return
     }
