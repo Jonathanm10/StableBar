@@ -1,0 +1,14 @@
+{
+  "$schema": "../scene.schema.json",
+  "configuration": {
+    "workspaceSource": "omniwm",
+    "widgets": [
+      { "id": "workspaces", "type": "workspaces", "position": "left" },
+      { "id": "clock", "type": "clock", "format": "EEE d MMM  HH:mm", "position": "right" }
+    ]
+  },
+  "workspaceManagers": ["aerospace"],
+  "draw": "settings",
+  "section": "general",
+  "height": 1920
+}

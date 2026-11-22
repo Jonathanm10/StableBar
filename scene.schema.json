@@ -228,6 +228,12 @@
       "description": "Draw setup's last step or Settings General as if this window manager ran and left a window under the bar, with the warning and the gap it needs for the scene's bar. Drawing never reads this Mac's windows.",
       "enum": ["aerospace", "yabai", "omniwm"]
     },
+    "workspaceManagers": {
+      "description": "The window managers Settings General finds on this Mac, whatever the Mac that draws has. Every one by default. macOS Spaces is always listed.",
+      "type": "array",
+      "items": { "enum": ["aerospace", "yabai", "omniwm", "rift"] },
+      "uniqueItems": true
+    },
     "shareScreen": {
       "description": "For `share` and `shareLink`: the screen Share My Bar draws the bar on. `this` is the scene's 1512 by 982 point screen without a notch, and `air13`, `pro14` and `pro16` a 13-inch MacBook Air, 14-inch and 16-inch MacBook Pro at their default sizes, with the notch. this by default.",
       "enum": ["this", "air13", "pro14", "pro16"]
