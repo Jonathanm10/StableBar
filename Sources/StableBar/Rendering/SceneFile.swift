@@ -267,7 +267,7 @@ struct SceneFile: Decodable {
         }
         workspaceManagers = try values.decodeIfPresent([WorkspaceSource].self, forKey: .workspaceManagers)
         if let workspaceManagers {
-            if draw != .settings || section != .general {
+            if draw != .settings || section != .general || widget != nil {
                 throw DecodingError.dataCorruptedError(forKey: .workspaceManagers, in: values,
                     debugDescription: "workspaceManagers draws Settings General.")
             }

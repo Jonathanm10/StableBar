@@ -15,11 +15,17 @@ import Testing
         #expect(scan.found == nil)
     }
 
-    @Test func rescanWhileScanningIsIgnored() {
+    @Test func rescanWhileScanningQueuesOneMoreScan() {
         var scan = WorkspaceManagerScan()
         _ = scan.handle(.rescan)
         #expect(scan.handle(.rescan) == [])
+        #expect(scan.handle(.rescan) == [])
+        #expect(scan.handle(.finished([.yabai])) == [.scan])
+        #expect(scan.found == [.yabai])
         #expect(scan.isScanning)
+        #expect(scan.handle(.finished([.rift])) == [])
+        #expect(scan.found == [.rift])
+        #expect(!scan.isScanning)
     }
 
     @Test func finishedKeepsWhatWasFound() {
@@ -84,21 +90,21 @@ import Testing
     }
 
     @Test @MainActor func finderReportsWhatTheLookupFinds() async throws {
-        let finder = WorkspaceManagerFinder(lookup: { [.yabai] })
+        let finder = WorkspaceManagerFinder(lookup: WorkspaceManagerLookup { [.yabai] }, notifications: NotificationCenter())
         finder.send(.rescan)
         #expect(finder.scan.isScanning)
         try await awaitCondition { finder.scan.found == [.yabai] }
         #expect(!finder.scan.isScanning)
     }
 
-    @Test @MainActor func finderDisablesRescanUntilTheLookupReturns() async throws {
+    @Test @MainActor func finderRunsOneLookupAtATime() async throws {
         let calls = OSAllocatedUnfairLock(initialState: 0)
         let release = DispatchSemaphore(value: 0)
-        let finder = WorkspaceManagerFinder(lookup: {
+        let finder = WorkspaceManagerFinder(lookup: WorkspaceManagerLookup {
             calls.withLock { $0 += 1 }
             release.wait()
             return [.rift]
-        })
+        }, notifications: NotificationCenter())
         finder.send(.rescan)
         try await awaitCondition { calls.withLock { $0 } == 1 }
         finder.send(.rescan)
@@ -109,13 +115,36 @@ import Testing
         #expect(calls.withLock { $0 } == 1)
         // One signal per possible lookup, so a wrongly started one can't hang the run.
         for _ in 0..<3 { release.signal() }
-        try await awaitCondition { finder.scan.found == [.rift] }
+        try await awaitCondition { finder.scan.found == [.rift] && !finder.scan.isScanning }
+        // The rescans that came during the first lookup run one more, after it.
+        #expect(calls.withLock { $0 } == 2)
+    }
+
+    @Test @MainActor func findersShareALookupThatIsStillRunning() async throws {
+        let calls = OSAllocatedUnfairLock(initialState: 0)
+        let release = DispatchSemaphore(value: 0)
+        let lookup = WorkspaceManagerLookup {
+            calls.withLock { $0 += 1 }
+            release.wait()
+            return [.rift]
+        }
+        let first = WorkspaceManagerFinder(lookup: lookup, notifications: NotificationCenter())
+        let second = WorkspaceManagerFinder(lookup: lookup, notifications: NotificationCenter())
+        first.send(.rescan)
+        try await awaitCondition { calls.withLock { $0 } == 1 }
+        second.send(.rescan)
+        // Only checks that the second finder starts no lookup of its own.
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(calls.withLock { $0 } == 1)
+        for _ in 0..<2 { release.signal() }
+        try await awaitCondition { first.scan.found == [.rift] && second.scan.found == [.rift] }
         #expect(calls.withLock { $0 } == 1)
     }
 
     @Test @MainActor func finderLooksAgainWhenTheLoginShellEnvironmentArrives() async throws {
-        let finder = WorkspaceManagerFinder(lookup: { [.aerospace] })
-        NotificationCenter.default.post(name: loginShellEnvironmentLoaded, object: nil)
+        let notifications = NotificationCenter()
+        let finder = WorkspaceManagerFinder(lookup: WorkspaceManagerLookup { [.aerospace] }, notifications: notifications)
+        notifications.post(name: loginShellEnvironmentLoaded, object: nil)
         try await awaitCondition { finder.scan.found == [.aerospace] }
     }
 

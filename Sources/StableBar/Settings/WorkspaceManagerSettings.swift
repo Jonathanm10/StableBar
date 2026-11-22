@@ -6,21 +6,44 @@ extension EnvironmentValues {
     @Entry var workspaceManagersSample: Set<WorkspaceSource>?
 }
 
-/// Runs `WorkspaceManagerScan`'s scans. The lookup reads the file system, which can stall on a disconnected network
-/// volume, so it never runs on the main actor.
+/// Looks for the installed window managers, one lookup at a time. The lookup reads the file system, which can stall on
+/// a disconnected network volume and keep its thread, so a caller that comes while one runs waits for its result.
+@MainActor
+final class WorkspaceManagerLookup {
+    static let installed = WorkspaceManagerLookup {
+        WorkspaceSource.installed(path: shellEnvironment.withLock { $0["PATH", default: ""] })
+    }
+
+    private let work: @Sendable () -> Set<WorkspaceSource>
+    private var running: Task<Set<WorkspaceSource>, Never>?
+
+    init(_ work: @escaping @Sendable () -> Set<WorkspaceSource>) {
+        self.work = work
+    }
+
+    func run() async -> Set<WorkspaceSource> {
+        if let running { return await running.value }
+        let work = work
+        let lookup = Task { (try? await BlockingWork.run(work)) ?? [] }
+        running = lookup
+        let found = await lookup.value
+        if running == lookup { running = nil }
+        return found
+    }
+}
+
+/// Runs `WorkspaceManagerScan`'s scans, off the main actor.
 @MainActor @Observable
 final class WorkspaceManagerFinder {
     private(set) var scan = WorkspaceManagerScan()
     @ObservationIgnored private var task: Task<Void, Never>?
-    @ObservationIgnored private let lookup: @Sendable () -> Set<WorkspaceSource>
+    @ObservationIgnored private let lookup: WorkspaceManagerLookup
     @ObservationIgnored private var observation: NotificationObservation?
 
-    init(lookup: @escaping @Sendable () -> Set<WorkspaceSource> = {
-        WorkspaceSource.installed(path: shellEnvironment.withLock { $0["PATH", default: ""] })
-    }) {
+    init(lookup: WorkspaceManagerLookup = .installed, notifications: NotificationCenter = .default) {
         self.lookup = lookup
         // Until the login shell's PATH arrives, a scan misses what Homebrew installed.
-        observation = NotificationObservation(loginShellEnvironmentLoaded) { [weak self] in self?.send(.rescan) }
+        observation = NotificationObservation(loginShellEnvironmentLoaded, in: notifications) { [weak self] in self?.send(.rescan) }
     }
 
     func send(_ event: WorkspaceManagerScan.Event) {
@@ -34,7 +57,7 @@ final class WorkspaceManagerFinder {
     private func start() {
         let lookup = lookup
         task = Task { [weak self] in
-            let found = (try? await BlockingWork.run(lookup)) ?? []
+            let found = await lookup.run()
             guard !Task.isCancelled else { return }
             self?.task = nil
             self?.send(.finished(found))
@@ -46,15 +69,17 @@ final class WorkspaceManagerFinder {
 
 /// Stops observing when released, so a main-actor owner needn't reach the observer from its deinit.
 private final class NotificationObservation: @unchecked Sendable {
+    private let center: NotificationCenter
     private let observer: any NSObjectProtocol
 
-    init(_ name: Notification.Name, perform: @escaping @MainActor @Sendable () -> Void) {
-        observer = NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { _ in
+    init(_ name: Notification.Name, in center: NotificationCenter, perform: @escaping @MainActor @Sendable () -> Void) {
+        self.center = center
+        observer = center.addObserver(forName: name, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { perform() }
         }
     }
 
-    deinit { NotificationCenter.default.removeObserver(observer) }
+    deinit { center.removeObserver(observer) }
 }
 
 /// Settings' choice of workspace manager: the window managers found on this Mac, then macOS Spaces.

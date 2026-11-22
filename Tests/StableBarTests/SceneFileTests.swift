@@ -242,6 +242,9 @@ func sceneRejectsASetupItCannotDraw(json: String) {
     #expect(throws: (any Error).self) {
         try scene(#"{"configuration": {}, "draw": "settings", "section": "general", "workspaceManagers": ["spaces"]}"#)
     }
+    #expect(throws: (any Error).self) {
+        try scene(#"{"configuration": {}, "draw": "settings", "section": "general", "widget": "clock", "workspaceManagers": ["yabai"]}"#)
+    }
 }
 
 @Test func sceneSchemaListsTheSamePropertiesAsTheDecoder() throws {

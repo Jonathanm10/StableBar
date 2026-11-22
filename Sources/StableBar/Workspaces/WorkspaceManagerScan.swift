@@ -6,6 +6,8 @@ struct WorkspaceManagerScan: StateMachine {
         case notScanned
         /// A scan runs; the previous one's result stays listed meanwhile.
         case scanning(previous: Set<WorkspaceSource>?)
+        /// A rescan came during the scan, which may have read the `PATH` before it changed, so another scan follows.
+        case scanningThenAgain(previous: Set<WorkspaceSource>?)
         case found(Set<WorkspaceSource>)
     }
 
@@ -25,22 +27,32 @@ struct WorkspaceManagerScan: StateMachine {
     var found: Set<WorkspaceSource>? {
         switch mode {
         case .notScanned: nil
-        case let .scanning(previous): previous
+        case let .scanning(previous), let .scanningThenAgain(previous): previous
         case let .found(found): found
         }
     }
 
     var isScanning: Bool {
-        if case .scanning = mode { true } else { false }
+        switch mode {
+        case .scanning, .scanningThenAgain: true
+        case .notScanned, .found: false
+        }
     }
 
     mutating func handle(_ event: Event) -> [Effect] {
-        switch event {
-        case .rescan:
-            guard !isScanning else { return [] }
+        switch (event, mode) {
+        case let (.rescan, .scanning(previous)):
+            mode = .scanningThenAgain(previous: previous)
+            return []
+        case (.rescan, .scanningThenAgain):
+            return []
+        case (.rescan, _):
             mode = .scanning(previous: found)
             return [.scan]
-        case let .finished(found):
+        case let (.finished(found), .scanningThenAgain):
+            mode = .scanning(previous: found)
+            return [.scan]
+        case let (.finished(found), _):
             mode = .found(found)
             return []
         }
