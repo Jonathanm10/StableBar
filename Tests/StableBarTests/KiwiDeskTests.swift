@@ -94,6 +94,22 @@ import Testing
         #expect(!snapshot[1].isVisible)
     }
 
+    /// KiwiDesk 5.0.2's own answers, from a Mac with one screen, its windows' titles shortened.
+    @Test func kiwidesksOwnOutputDecodes() throws {
+        let state = Data(#"""
+        {"active_space":"1","away_windows":[],"desktop":1,"exec_running":0,"monitor_count":1,"spaces":[{"away_windows":[],"focused":42,"id":"1","mode":"scrolling","windows":[12,42]},{"away_windows":[],"focused":null,"id":"2","mode":"monocle","windows":[]},{"away_windows":[],"focused":null,"id":"3","mode":"floating","windows":[]}],"windows":[{"app":"KiwiDesk","bundle_id":"com.kiwicanopy.kiwidesk","floating":true,"id":42,"pocket":null,"title":"KiwiDesk Setup"},{"app":"Terminal","bundle_id":"com.apple.terminal","floating":false,"id":12,"pocket":null,"title":"zsh"}]}
+        """#.utf8)
+        let listed = Data(#"""
+        [{"app":"Terminal","display":1,"effective_float":false,"focused":false,"frame":{"height":619,"width":1004,"x":10,"y":75.5},"fullscreen":false,"id":12,"index":1,"pid":386,"shown":true,"space_id":"1","title":"zsh","visibility":"visible","z":1},{"app":"KiwiDesk","display":1,"effective_float":true,"focused":true,"frame":{"height":692,"width":560,"x":232,"y":30},"fullscreen":false,"id":42,"index":2,"pid":1937,"shown":true,"space_id":"1","title":"KiwiDesk Setup","visibility":"hidden","z":0}]
+        """#.utf8)
+        let snapshot = try kiwideskSnapshot(state: state, windows: listed, screenIDs: [1])
+        #expect(snapshot.map(\.name) == ["1", "2", "3"])
+        #expect(snapshot.map(\.isVisible) == [true, false, false])
+        #expect(snapshot[0].windows.map(\.id) == [12, 42])
+        #expect(snapshot[0].windows.map(\.isFocused) == [false, true])
+        #expect(snapshot[0].apps.map(\.bundleID) == ["com.kiwicanopy.kiwidesk", "com.apple.terminal"])
+    }
+
     @Test func idsWrittenAsDecimalsStillMatch() throws {
         let snapshot = try kiwideskSnapshot(
             state: Data(#"{"active_space":"1","spaces":[{"id":"1","windows":[11.0]}],"windows":[{"id":11.0,"app":"Safari","bundle_id":null,"title":"","floating":false,"pocket":null}]}"#.utf8),

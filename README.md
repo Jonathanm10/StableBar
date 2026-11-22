@@ -47,7 +47,7 @@ brew install --cask stablebox/tap/stablebar
 
 <p><img src="docs/images/readme-workspaces.gif" width="100%" alt="Switching workspaces updates the selected workspace and the app window below, with the screen held still."></p>
 
-Follow your workspaces with [AeroSpace](https://github.com/nikitabobko/AeroSpace), [yabai](https://github.com/koekeishiya/yabai), [OmniWM](https://github.com/OmniNull/OmniWM) or [Rift](https://github.com/acsandmann/rift). Without a window manager, try the opt-in [macOS Spaces source](docs/widgets.md#macos-spaces-workspaces).
+Follow your workspaces with [AeroSpace](https://github.com/nikitabobko/AeroSpace), [yabai](https://github.com/koekeishiya/yabai), [OmniWM](https://github.com/OmniNull/OmniWM), [Rift](https://github.com/acsandmann/rift) or [KiwiDesk](https://github.com/KiwiCanopy/KiwiDesk). Without a window manager, try the opt-in [macOS Spaces source](docs/widgets.md#macos-spaces-workspaces).
 
 <p><img src="docs/images/readme-popups.gif" width="100%" alt="The pointer opens music controls and then a CPU and memory graph beneath their widgets."></p>
 

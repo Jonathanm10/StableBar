@@ -40,7 +40,7 @@ struct GeneralSettingsView: View {
                             set: { editor.change(ConfigurationEdit(action: .bar, properties: $0)) },
                             unset: { editor.change(ConfigurationEdit(action: .unset, properties: ["bar": .object($0)])) })
                         bar.toggle("Keep windows clear of the bar", "keepWindowsClear", default: false,
-                                   hint: "Moves ordinary windows out from under the bar. Leave it off when AeroSpace, yabai, OmniWM or Rift sets gaps.")
+                                   hint: "Moves ordinary windows out from under the bar. Leave it off when AeroSpace, yabai, OmniWM, Rift or KiwiDesk sets gaps.")
                         if let managerGap {
                             HStack(spacing: 8) {
                                 Label("\(managerGap.warning) \(managerGap.setting)", systemImage: "exclamationmark.triangle.fill")

@@ -21,7 +21,7 @@
 
 The AeroSpace connection subscribes to workspace, monitor, window and focus events. It loads an initial snapshot, coalesces pending events and reconnects after a disconnect with exponential backoff, capped at five minutes, and at once when AeroSpace launches. Ten seconds of connection resets the backoff. The accent color marks the focused workspace; an outline marks a workspace visible on another monitor. Empty, inactive workspaces are hidden. App icons are deduplicated per workspace unless `workspace.windows` is enabled. Active-app updates come from NSWorkspace notifications.
 
-Window dragging is enabled only for the AeroSpace, yabai and Rift workspace sources. Drag an app icon onto another workspace to move that app's windows from the original workspace. With `workspace.windows: true`, dragging an item moves only that window; the [presentation example](../examples/presentation/config.json) uses this mode. Empty workspaces appear while dragging, and the destination is outlined; you can also drop onto a workspace on another display. Moving does not switch to the destination. If one of an app's windows has left every workspace, the others still move. Escape or dropping outside a workspace cancels the move. Clicks keep their usual behavior. OmniWM and macOS Spaces do not support dragging windows from the widget.
+Window dragging is enabled only for the AeroSpace, yabai, Rift and KiwiDesk workspace sources. Drag an app icon onto another workspace to move that app's windows from the original workspace. With `workspace.windows: true`, dragging an item moves only that window; the [presentation example](../examples/presentation/config.json) uses this mode. Empty workspaces appear while dragging, and the destination is outlined; you can also drop onto a workspace on another display. Moving does not switch to the destination. If one of an app's windows has left every workspace, the others still move. Escape or dropping outside a workspace cancels the move. Clicks keep their usual behavior. OmniWM and macOS Spaces do not support dragging windows from the widget.
 
 ## Essentials details and settings
 
@@ -85,7 +85,7 @@ App menus and the Apple menu follow the app that owns the macOS menu bar, even w
 
 ## Workspace managers
 
-The Workspaces widget shows the workspaces of AeroSpace, yabai, [OmniWM](#omniwm-workspaces), [Rift](#rift-workspaces) or [macOS Spaces](#macos-spaces-workspaces), set with `workspaceSource` at the top level of your configuration. **Workspace manager**, under **Settings → General → Workspaces**, lists the window managers found on this Mac, those whose command is on your login shell's `PATH` or, for OmniWM, inside its app, then macOS Spaces. It looks again each time General opens; after installing one while Settings is open, choose **Rescan**. Both use the `PATH` StableBar read when it started, so a window manager installed into a folder new to your `PATH`, as a first Homebrew install adds, shows once you quit and reopen StableBar. A configured window manager that isn't found stays listed as not found, with a warning.
+The Workspaces widget shows the workspaces of AeroSpace, yabai, [OmniWM](#omniwm-workspaces), [Rift](#rift-workspaces), [KiwiDesk](#kiwidesk-workspaces) or [macOS Spaces](#macos-spaces-workspaces), set with `workspaceSource` at the top level of your configuration. **Workspace manager**, under **Settings → General → Workspaces**, lists the window managers found on this Mac, those whose command is on your login shell's `PATH` or, for OmniWM and KiwiDesk, inside their app, then macOS Spaces. It looks again each time General opens; after installing one while Settings is open, choose **Rescan**. Both use the `PATH` StableBar read when it started, so a window manager installed into a folder new to your `PATH`, as a first Homebrew install adds, shows once you quit and reopen StableBar. A configured window manager that isn't found stays listed as not found, with a warning.
 
 ## yabai workspaces
 
@@ -140,6 +140,19 @@ StableBar runs `omniwmctl` from your login shell's `PATH`, or the copy inside Om
 ```
 
 StableBar runs `rift-cli` from your login shell's `PATH`. Rift keeps its own workspaces in each macOS Space, so each display shows the workspaces of the Space it's on, and none while Rift doesn't manage that Space. Cells keep Rift's order and show its workspace names. StableBar subscribes to all of Rift's events, so Rift needs no signals, and it reconnects like the AeroSpace connection, except that Rift has no app whose launch StableBar can see. Clicking a workspace runs `rift-cli execute workspace switch INDEX`, and clicking a window item switches to its workspace and focuses that window. Rift switches workspaces on the display that has focus, so a click on another display's bar focuses that display first. Dragging moves windows with `rift-cli execute workspace move-window`, between workspaces on the same display. If the widget says Rift disconnected, check that Rift is running (`rift service start`), then choose **Reconnect** in **Settings → General → Workspaces**.
+
+## KiwiDesk workspaces
+
+Set the source at the top level of your configuration:
+
+```json
+{
+  "workspaceSource": "kiwidesk",
+  "widgets": [{ "id": "spaces", "type": "workspaces", "position": "left" }]
+}
+```
+
+[KiwiDesk](https://github.com/KiwiCanopy/KiwiDesk) calls its workspaces Spaces. StableBar runs `kiwidesk` from your login shell's `PATH`, or the copy inside KiwiDesk's app when you installed it from the `.dmg`, so linking the command is optional. It subscribes to KiwiDesk's Space, window, focus, Desktop and screen events, so KiwiDesk needs no signals, and it reconnects like the AeroSpace connection, at once when KiwiDesk launches. Cells keep KiwiDesk's Space order and show the windows of the macOS Desktop on screen, as KiwiDesk's own Space Bar does; windows in KiwiDesk's pocket or on another Desktop aren't shown. Clicking a Space runs `kiwidesk focus_space ID`, clicking a window item runs `kiwidesk focus_window ID`, and dragging moves windows with `kiwidesk move_to_space`. KiwiDesk doesn't report which screen shows which Space, so StableBar places each Space on the screen its windows are on: with several screens, an empty Space shown on another screen doesn't appear there, and an empty focused Space appears on the main screen ([KiwiDesk#3549](https://github.com/KiwiCanopy/KiwiDesk/issues/3549) asks for that). To see only StableBar's cells, hide KiwiDesk's Space Bar in its settings. If the widget says KiwiDesk disconnected, check that KiwiDesk is running, then choose **Reconnect** in **Settings → General → Workspaces**.
 
 ## macOS Spaces workspaces
 

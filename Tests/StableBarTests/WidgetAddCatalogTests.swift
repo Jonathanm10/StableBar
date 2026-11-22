@@ -29,7 +29,7 @@ final class WidgetAddCatalogTests: XCTestCase {
         XCTAssertEqual(disk.properties?["style"], choices.first { $0.id == "system" }?.properties?["style"])
         XCTAssertNil(disk.replacesPackage)
         XCTAssertTrue(choices.first { $0.id == "calendar" }!.description.contains("Calendar access"))
-        XCTAssertTrue(choices.first { $0.id == "workspaces" }!.description.contains("AeroSpace, yabai, OmniWM, Rift or macOS Spaces"))
+        XCTAssertTrue(choices.first { $0.id == "workspaces" }!.description.contains("AeroSpace, yabai, OmniWM, Rift, KiwiDesk or macOS Spaces"))
         XCTAssertEqual(choices.filter { $0.matches("SOUND") }.map(\.id), ["audio"])
     }
 

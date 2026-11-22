@@ -52,7 +52,7 @@ Much of a SketchyBar setup carries over. Items become widgets, plugins stay shel
 - **A click refreshes the widget.** When `onClick` finishes, the widget's command runs again with `SENDER=action`.
 - **Icons are SF Symbols.** `icon` takes an SF Symbol name, such as `battery.75`. To show a glyph from an icon font, such as a Nerd Font, put it in the text and set the widget's `style.fontName` to that font, or draw it in its own block of a [layout](create-a-widget.md#composing-widgets). For app icons in workspaces, StableBar has a [sketchybar-app-font module](widgets.md#workspace-appearance).
 - **Colors put alpha last.** SketchyBar's `0xAARRGGBB` becomes `#RRGGBBAA`: `0xff1e1e2e` is `#1e1e2eff`, or `#1e1e2e`, and `0x80000000` is `#00000080`.
-- **Workspaces connect themselves.** The `workspaces` widget reads AeroSpace, OmniWM, Rift or macOS Spaces directly, so AeroSpace's `exec-on-workspace-change` doesn't need to call the bar. yabai needs signals that run `StableBar --trigger yabai`; see [yabai workspaces](widgets.md#yabai-workspaces).
+- **Workspaces connect themselves.** The `workspaces` widget reads AeroSpace, OmniWM, Rift, KiwiDesk or macOS Spaces directly, so AeroSpace's `exec-on-workspace-change` doesn't need to call the bar. yabai needs signals that run `StableBar --trigger yabai`; see [yabai workspaces](widgets.md#yabai-workspaces).
 - **Many plugins are built in.** The clock, battery, sound, Wi-Fi, CPU, network, calendar, app menus and more are [built-in widgets](widgets.md) that need no script.
 
 ## Port a plugin

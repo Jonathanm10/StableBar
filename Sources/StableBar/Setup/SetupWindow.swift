@@ -182,7 +182,7 @@ struct SetupSystem {
     }
     /// Whether a manager runs, even when Workspaces uses Spaces or the manager's command isn't on PATH.
     var windowManagerRuns: () -> Bool = {
-        [WorkspaceSource.aerospace, .yabai, .omniwm, .rift].contains(where: \.isRunning)
+        WorkspaceSource.windowManagers.contains(where: \.isRunning)
     }
     /// Scenes and tests replace the read-only check so drawing setup never contacts a window manager.
     var checkWorkspaces: @Sendable (WorkspaceSource, URL) async -> SetupWorkspaceResult = { source, configuration in

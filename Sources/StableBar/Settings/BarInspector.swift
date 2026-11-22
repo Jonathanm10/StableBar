@@ -521,7 +521,7 @@ struct BarInspector: View {
                         }).animation(.snappy(duration: 0.2)))
                         .toggleStyle(.switch).labelsHidden().controlSize(.small)
                     }
-                    SettingRow(title: "Mark the focused window", hint: "Works with AeroSpace, OmniWM, Rift and yabai") {
+                    SettingRow(title: "Mark the focused window", hint: "Works with AeroSpace, OmniWM, Rift, KiwiDesk and yabai") {
                         Toggle("Mark the focused window", isOn: Binding(get: { widget.workspace?.focusedWindowStyle != nil }, set: {
                             editor.set(["workspace": .object(["focusedWindowStyle": $0 ? .object([:]) : .null])], for: widget.id)
                         }).animation(.snappy(duration: 0.2)))

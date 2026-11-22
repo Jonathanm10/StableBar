@@ -18,7 +18,7 @@ Saving from Settings, setup or the command line pins it to the version that save
 - `defaults`: styles inherited by every widget.
 - `popupDefaults`: styles inherited by every popup, over `defaults`. Its `paddingHorizontal`, `paddingVertical` and `spacing` set every popup's padding and spacing, which never come from `defaults` (see [Popups](popups.md)).
 - `groupDefaults`: styles every [group](layout.md#adaptive-layout-and-groups) starts from, such as its background, border, corners, padding and spacing. A group's own `style` wins, property by property.
-- `workspaceSource`: `aerospace` (default), `yabai`, `omniwm` (see [OmniWM workspaces](widgets.md#omniwm-workspaces)), `rift` (see [Rift workspaces](widgets.md#rift-workspaces)) or `spaces` (macOS Spaces, see [macOS Spaces workspaces](widgets.md#macos-spaces-workspaces)), for workspace widgets and active-display tracking.
+- `workspaceSource`: `aerospace` (default), `yabai`, `omniwm` (see [OmniWM workspaces](widgets.md#omniwm-workspaces)), `rift` (see [Rift workspaces](widgets.md#rift-workspaces)), `kiwidesk` (see [KiwiDesk workspaces](widgets.md#kiwidesk-workspaces)) or `spaces` (macOS Spaces, see [macOS Spaces workspaces](widgets.md#macos-spaces-workspaces)), for workspace widgets and active-display tracking.
 - `packageSources`: [private package sources](packages.md#private-sources), each with an `id`, a `name` and an `https` index `url`.
 - `widgets`: ordered widget definitions with unique `id`, `type`, `position` and optional `style`, `icon`, `onClick` or `open`, `menu`, `popup`.
 - `position`: `left`, `notchLeft`, `center`, `notchRight` or `right`.
