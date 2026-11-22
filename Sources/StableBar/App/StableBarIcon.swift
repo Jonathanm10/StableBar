@@ -7,14 +7,13 @@ enum StableBarIcon {
     /// pick other artwork in two copies of the same app, which changes the screens CI draws from each.
     static let image: NSImage = artwork(in: .main) ?? NSApplication.shared.applicationIconImage
 
-    /// The icon's 256-point artwork at 2x. One fixed bitmap, so AppKit can't choose another of the file's sizes by the
-    /// screen or when a view scales it.
+    /// The file's 512-pixel bitmap, the smallest at least that large, as 256 points. It's taken from the file rather
+    /// than through AppKit, whose choice of size depends on the screen and the macOS version.
     static func artwork(in bundle: Bundle) -> NSImage? {
         guard let url = bundle.url(forResource: "AppIcon", withExtension: "icns"), let image = NSImage(contentsOf: url) else { return nil }
-        image.size = NSSize(width: 256, height: 256)
-        var rect = NSRect(origin: .zero, size: image.size)
-        let scale = NSAffineTransform()
-        scale.scale(by: 2)
-        return image.cgImage(forProposedRect: &rect, context: nil, hints: [.ctm: scale]).map { NSImage(cgImage: $0, size: rect.size) }
+        let bitmaps = image.representations.compactMap { $0 as? NSBitmapImageRep }
+        let bitmap = bitmaps.filter { $0.pixelsWide >= 512 }.min { $0.pixelsWide < $1.pixelsWide }
+            ?? bitmaps.max { $0.pixelsWide < $1.pixelsWide }
+        return bitmap?.cgImage.map { NSImage(cgImage: $0, size: NSSize(width: 256, height: 256)) }
     }
 }
