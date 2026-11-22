@@ -56,7 +56,7 @@ To keep an item you use often on the bar itself, right-click its icon in the row
 
 ## How do I show my workspaces on the bar?
 
-Add **Workspaces** with **Add widget** in **Settings → Bar**. It keeps the source your configuration names while that one is installed; otherwise it takes the first of AeroSpace, yabai, OmniWM, Rift and KiwiDesk that is installed and running, and your macOS Spaces when none is. The bar then keeps that source; to pick another, use **Settings → General → Workspaces**.
+Add **Workspaces** with **Add widget** in **Settings → Bar**. When you add it, it keeps the source your configuration names while that one is installed; otherwise it takes the first of AeroSpace, yabai, OmniWM, Rift and KiwiDesk that is installed and running, or your macOS Spaces when none is. The bar keeps that source and doesn't switch on its own, even when the window manager quits; to pick another, use **Settings → General → Workspaces**.
 
 Some sources need one step on their side:
 
