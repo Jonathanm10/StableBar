@@ -4,7 +4,7 @@ import Testing
 
 @Suite @MainActor
 struct SetupClearanceTests {
-    @Test(arguments: [WorkspaceSource.spaces, .aerospace, .yabai, .omniwm, .rift])
+    @Test(arguments: [WorkspaceSource.spaces, .aerospace, .yabai, .omniwm, .rift, .kiwidesk])
     func windowClearanceDefaultsToOnOnlyWithoutAManager(source: WorkspaceSource) throws {
         let fixture = try ClearanceSetupFixture(workspaceSource: source)
         defer { fixture.close() }
@@ -66,7 +66,7 @@ struct SetupClearanceTests {
         #expect(bar?["keepWindowsClear"] == (windowManagerRuns ? nil : .bool(true)))
     }
 
-    @Test(arguments: [WorkspaceSource.spaces, .aerospace, .yabai, .omniwm, .rift], [false, true])
+    @Test(arguments: [WorkspaceSource.spaces, .aerospace, .yabai, .omniwm, .rift, .kiwidesk], [false, true])
     func setupKeepsConfiguredWindowClearance(source: WorkspaceSource, enabled: Bool) throws {
         let fixture = try ClearanceSetupFixture(configuration: #"{"bar":{"keepWindowsClear":\#(enabled)},"widgets":[]}"#,
                                                 workspaceSource: source)

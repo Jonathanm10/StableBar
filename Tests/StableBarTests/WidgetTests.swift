@@ -473,11 +473,113 @@ private func calls(_ log: URL) -> [Substring] {
     ])
 }
 
+@Test @MainActor func kiwideskEventsRefreshWorkspacesAfterTheSubscriptionStarts() async throws {
+    let fixture = try omniwmFixture("""
+    case "$1" in
+      subscribe)
+        printf '%s\\n' '{"status":"success","data":{"unknown":[]}}'
+        while [ ! -f "${0%/*}/event" ]; do /bin/sleep 0.01; done
+        printf '%s\\n' '{"event":"space_change","data":{"space_id":"1","mode":"bsp","window_count":0}}'
+        exec /usr/bin/tail -f /dev/null ;;
+      get_state) printf '%s\\n' '{"active_space":"1","spaces":[{"id":"1","windows":[]}],"windows":[]}' ;;
+      list_windows) echo '[]' ;;
+    esac
+    """)
+    defer { fixture.store.stop(); try? FileManager.default.removeItem(at: fixture.directory) }
+    fixture.store.configure(source: .kiwidesk, workspaces: true, mode: false)
+    for _ in 0..<200 where !calls(fixture.log).contains("list_windows") { try await Task.sleep(for: .milliseconds(20)) }
+    try #require(calls(fixture.log).contains("list_windows"))
+    try Data().write(to: fixture.directory.appending(path: "event"))
+    for _ in 0..<200 where calls(fixture.log).filter({ $0 == "get_state" }).count < 2 { try await Task.sleep(for: .milliseconds(20)) }
+    let made = calls(fixture.log)
+    #expect(made.contains("subscribe space_change focus_change monitor_change desktop_change window_created window_destroyed window_moved_to_space"))
+    #expect(made.filter { $0 == "get_state" }.count == 2)
+    #expect(fixture.store.workspaces.map(\.name) == ["1"])
+    #expect(fixture.store.connectionStatus == .connected)
+}
+
+@Test @MainActor func kiwideskClicksAndDragsRunItsCommands() async throws {
+    let fixture = try omniwmFixture("""
+    case "$1" in
+      get_state) printf '%s\\n' '{"active_space":"1","spaces":[{"id":"1","windows":[11]},{"id":"2","windows":[]}],"windows":[{"id":11,"app":"Notes","bundle_id":"com.apple.Notes","title":"List","floating":false,"pocket":null}]}' ;;
+      list_windows) printf '%s\\n' '[{"id":11,"space_id":"1","display":1,"shown":true,"focused":true}]' ;;
+    esac
+    """)
+    defer { fixture.store.stop(); try? FileManager.default.removeItem(at: fixture.directory) }
+    let snapshot = try await readKiwiDeskWorkspaces(fixture.directory.appending(path: "omniwmctl").path, screenIDs: [1])
+    fixture.store.source = .kiwidesk
+    fixture.store.workspaces = snapshot
+    await fixture.store.focus(snapshot[0].windows[0])?.value
+    fixture.store.select(snapshot[1])
+    for _ in 0..<100 where calls(fixture.log).count < 4 { try await Task.sleep(for: .milliseconds(20)) }
+    let payload = try #require(fixture.store.windowDrag.begin(source: .kiwidesk, windows: [snapshot[0].windows[0]]))
+    #expect(fixture.store.canMoveWindows(payload, to: "2"))
+    await fixture.store.moveWindows(payload, to: "2")?.value
+    #expect(fixture.store.error == nil)
+    let made = calls(fixture.log)
+    #expect(Set(made.prefix(2)) == ["get_state", "list_windows"])
+    #expect(Array(made.dropFirst(2).prefix(3)) == ["focus_window 11", "focus_space 2", "move_to_space 2 11"])
+}
+
+@Test @MainActor func aWindowManagerThatLaunchesReconnectsAtOnce() async throws {
+    let fixture = try omniwmFixture("""
+    [ "$1" = subscribe ] && exit 1
+    exit 1
+    """)
+    defer { fixture.store.stop(); try? FileManager.default.removeItem(at: fixture.directory) }
+    var launched: [String: @MainActor @Sendable () -> Void] = [:]
+    fixture.store.watchLaunches = { bundleID, handler in launched[bundleID] = handler; return NSObject() }
+    fixture.store.log = { _ in }
+    fixture.store.configure(source: .kiwidesk, workspaces: true, mode: false)
+    try await awaitCondition { fixture.store.connectionError != nil }
+    // The fixture waits 30 seconds between attempts, so a second subscribe now comes from the launch.
+    try #require(calls(fixture.log).filter { $0.hasPrefix("subscribe") }.count == 1)
+    try #require(launched[kiwideskBundleID] != nil)
+    launched[kiwideskBundleID]?()
+    try await awaitCondition { calls(fixture.log).filter { $0.hasPrefix("subscribe") }.count == 2 }
+}
+
+@Test @MainActor func aLaunchAfterTheStoreStopsStartsNothing() async throws {
+    let fixture = try omniwmFixture("exit 1")
+    defer { fixture.store.stop(); try? FileManager.default.removeItem(at: fixture.directory) }
+    var launched: [String: @MainActor @Sendable () -> Void] = [:]
+    fixture.store.watchLaunches = { bundleID, handler in launched[bundleID] = handler; return NSObject() }
+    fixture.store.log = { _ in }
+    fixture.store.configure(source: .kiwidesk, workspaces: true, mode: false)
+    try await awaitCondition { calls(fixture.log).contains { $0.hasPrefix("subscribe") } }
+    fixture.store.stop()
+    // A launch the watch saw just before the store stopped arrives after it.
+    launched[kiwideskBundleID]?()
+    #expect(!fixture.store.isRunning)
+    // Only checks that no subscription starts.
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(calls(fixture.log).filter { $0.hasPrefix("subscribe") }.count == 1)
+}
+
+@Test @MainActor func kiwideskSubscriptionFailureShowsAndRetries() async throws {
+    let fixture = try omniwmFixture("""
+    case "$1" in
+      subscribe) echo 'KiwiDesk is not running' >&2; exit 1 ;;
+      *) exit 1 ;;
+    esac
+    """)
+    defer { fixture.store.stop(); try? FileManager.default.removeItem(at: fixture.directory) }
+    fixture.store.reconnectDelay = 0
+    fixture.store.log = { _ in }
+    fixture.store.configure(source: .kiwidesk, workspaces: true, mode: false)
+    for _ in 0..<500 where calls(fixture.log).filter({ $0.hasPrefix("subscribe") }).count < 2 {
+        try await Task.sleep(for: .milliseconds(20))
+    }
+    #expect(calls(fixture.log).filter { $0.hasPrefix("subscribe") }.count >= 2)
+    #expect(fixture.store.connectionError == "KiwiDesk disconnected. Reconnecting…")
+    #expect(fixture.store.isRunning)
+}
+
 @Test func workspacesUseAWindowManagerOnlyWhenItIsInstalledAndRunning() throws {
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
-    for name in ["yabai", "omniwmctl", "rift-cli"] {
+    for name in ["yabai", "omniwmctl", "rift-cli", "kiwidesk"] {
         FileManager.default.createFile(atPath: directory.appending(path: name).path, contents: Data("#!/bin/sh\n".utf8),
                                        attributes: [.posixPermissions: 0o700])
     }
@@ -487,6 +589,7 @@ private func calls(_ log: URL) -> [Substring] {
     #expect(WorkspaceSource.detected(path: path, configured: nil, running: { $0 == .aerospace }) == .spaces)
     #expect(WorkspaceSource.detected(path: path, configured: nil, running: { $0 == .omniwm }) == .omniwm)
     #expect(WorkspaceSource.detected(path: path, configured: nil, running: { $0 == .rift }) == .rift)
+    #expect(WorkspaceSource.detected(path: path, configured: nil, running: { $0 == .kiwidesk }) == .kiwidesk)
     #expect(WorkspaceSource.detected(path: path, configured: nil, running: { _ in true }) == .yabai)
     // A source the configuration names stays while it's installed, running or not.
     #expect(WorkspaceSource.detected(path: path, configured: .omniwm, running: { _ in false }) == .omniwm)
@@ -494,6 +597,8 @@ private func calls(_ log: URL) -> [Substring] {
     #expect(WorkspaceSource.detected(path: path, configured: .aerospace, running: { $0 == .yabai }) == .yabai)
     #expect(WorkspaceSource.omniwm.executable(path: path) == directory.appending(path: "omniwmctl").path)
     #expect(WorkspaceSource.rift.executable(path: path) == directory.appending(path: "rift-cli").path)
+    #expect(WorkspaceSource.kiwidesk.executable(path: path) == directory.appending(path: "kiwidesk").path)
+    #expect(WorkspaceSource.windowManagers.last == .kiwidesk)
 }
 
 @Test func aProcessCountsAsRunningOnlyWhileItRunsForThisUser() throws {

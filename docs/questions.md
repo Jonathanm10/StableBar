@@ -12,6 +12,7 @@ If a window manager arranges your windows, leave that switch off and give the wi
 - yabai: `external_bar` in your yabai configuration
 - OmniWM: `gaps.outer.top` in its `settings.toml`
 - Rift: `top` under `[settings.layout.gaps.outer]` in `~/.config/rift/config.toml`
+- KiwiDesk: if windows reach under the bar, raise the top outer gap under **Gaps & Borders** in KiwiDesk's settings, which saves it with your profile. KiwiDesk adds it below the strip it keeps at the top of the screen. An `init.lua` that manages KiwiDesk itself can call `KiwiDesk.set_gap_global({ top = … })`, which resets each gap you leave out to 10.
 
 For a bar at the bottom of the screen, give it a bottom gap instead, such as `gaps.outer.bottom` in AeroSpace.
 
@@ -55,7 +56,7 @@ To keep an item you use often on the bar itself, right-click its icon in the row
 
 ## How do I show my workspaces on the bar?
 
-Add **Workspaces** with **Add widget** in **Settings → Bar**. It uses whichever of AeroSpace, yabai, OmniWM or Rift is running, and your macOS Spaces when none is. To pick another source, use **Settings → General → Workspaces**.
+Add **Workspaces** with **Add widget** in **Settings → Bar**. When you add it, it keeps the source your configuration names while that one is installed; otherwise it takes the first of AeroSpace, yabai, OmniWM, Rift and KiwiDesk that is installed and running, or your macOS Spaces when none is. The bar keeps that source and doesn't switch on its own, even when the window manager quits; to pick another, use **Settings → General → Workspaces**.
 
 Some sources need one step on their side:
 
