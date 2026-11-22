@@ -24,6 +24,12 @@ private struct KiwiDeskState: Decodable {
     }
 }
 
+/// A line of `kiwidesk subscribe`: its confirmation, with `status`, or an event.
+struct KiwiDeskMessage: Decodable {
+    let event: String?
+    let status: String?
+}
+
 private struct KiwiDeskListedWindow: Decodable {
     let id: Double
     let display: Double?

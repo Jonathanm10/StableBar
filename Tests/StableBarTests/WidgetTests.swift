@@ -473,6 +473,73 @@ private func calls(_ log: URL) -> [Substring] {
     ])
 }
 
+@Test @MainActor func kiwideskEventsRefreshWorkspacesAfterTheSubscriptionStarts() async throws {
+    let fixture = try omniwmFixture("""
+    case "$1" in
+      subscribe)
+        printf '%s\\n' '{"status":"success","data":{"unknown":[]}}'
+        while [ ! -f "${0%/*}/event" ]; do /bin/sleep 0.01; done
+        printf '%s\\n' '{"event":"space_change","data":{"space_id":"1","mode":"bsp","window_count":0}}'
+        exec /usr/bin/tail -f /dev/null ;;
+      get_state) printf '%s\\n' '{"active_space":"1","spaces":[{"id":"1","windows":[]}],"windows":[]}' ;;
+      list_windows) echo '[]' ;;
+    esac
+    """)
+    defer { fixture.store.stop(); try? FileManager.default.removeItem(at: fixture.directory) }
+    fixture.store.configure(source: .kiwidesk, workspaces: true, mode: false)
+    for _ in 0..<200 where !calls(fixture.log).contains("list_windows") { try await Task.sleep(for: .milliseconds(20)) }
+    try #require(calls(fixture.log).contains("list_windows"))
+    try Data().write(to: fixture.directory.appending(path: "event"))
+    for _ in 0..<200 where calls(fixture.log).filter({ $0 == "get_state" }).count < 2 { try await Task.sleep(for: .milliseconds(20)) }
+    let made = calls(fixture.log)
+    #expect(made.contains("subscribe space_change focus_change monitor_change desktop_change window_created window_destroyed window_moved_to_space"))
+    #expect(made.filter { $0 == "get_state" }.count == 2)
+    #expect(fixture.store.workspaces.map(\.name) == ["1"])
+    #expect(fixture.store.connectionStatus == .connected)
+}
+
+@Test @MainActor func kiwideskClicksAndDragsRunItsCommands() async throws {
+    let fixture = try omniwmFixture("""
+    case "$1" in
+      get_state) printf '%s\\n' '{"active_space":"1","spaces":[{"id":"1","windows":[11]},{"id":"2","windows":[]}],"windows":[{"id":11,"app":"Notes","bundle_id":"com.apple.Notes","title":"List","floating":false,"pocket":null}]}' ;;
+      list_windows) printf '%s\\n' '[{"id":11,"space_id":"1","display":1,"shown":true,"focused":true}]' ;;
+    esac
+    """)
+    defer { fixture.store.stop(); try? FileManager.default.removeItem(at: fixture.directory) }
+    let snapshot = try await readKiwiDeskWorkspaces(fixture.directory.appending(path: "omniwmctl").path, screenIDs: [1])
+    fixture.store.source = .kiwidesk
+    fixture.store.workspaces = snapshot
+    await fixture.store.focus(snapshot[0].windows[0])?.value
+    fixture.store.select(snapshot[1])
+    for _ in 0..<100 where calls(fixture.log).count < 4 { try await Task.sleep(for: .milliseconds(20)) }
+    let payload = try #require(fixture.store.windowDrag.begin(source: .kiwidesk, windows: [snapshot[0].windows[0]]))
+    #expect(fixture.store.canMoveWindows(payload, to: "2"))
+    await fixture.store.moveWindows(payload, to: "2")?.value
+    #expect(fixture.store.error == nil)
+    let made = calls(fixture.log)
+    #expect(Set(made.prefix(2)) == ["get_state", "list_windows"])
+    #expect(Array(made.dropFirst(2).prefix(3)) == ["focus_window 11", "focus_space 2", "move_to_space 2 11"])
+}
+
+@Test @MainActor func kiwideskSubscriptionFailureShowsAndRetries() async throws {
+    let fixture = try omniwmFixture("""
+    case "$1" in
+      subscribe) echo 'KiwiDesk is not running' >&2; exit 1 ;;
+      *) exit 1 ;;
+    esac
+    """)
+    defer { fixture.store.stop(); try? FileManager.default.removeItem(at: fixture.directory) }
+    fixture.store.reconnectDelay = 0
+    fixture.store.log = { _ in }
+    fixture.store.configure(source: .kiwidesk, workspaces: true, mode: false)
+    for _ in 0..<500 where calls(fixture.log).filter({ $0.hasPrefix("subscribe") }).count < 2 {
+        try await Task.sleep(for: .milliseconds(20))
+    }
+    #expect(calls(fixture.log).filter { $0.hasPrefix("subscribe") }.count >= 2)
+    #expect(fixture.store.connectionError == "KiwiDesk disconnected. Reconnecting…")
+    #expect(fixture.store.isRunning)
+}
+
 @Test func workspacesUseAWindowManagerOnlyWhenItIsInstalledAndRunning() throws {
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

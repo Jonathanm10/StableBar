@@ -336,6 +336,9 @@ final class WorkspaceStore {
                                             "--no-send-initial", "--format", "ndjson"]
                     case .rift:
                         stream.arguments = ["subscribe", "mach", "*"]
+                    case .kiwidesk:
+                        stream.arguments = ["subscribe", "space_change", "focus_change", "monitor_change", "desktop_change",
+                                            "window_created", "window_destroyed", "window_moved_to_space"]
                     default:
                         stream.arguments = ["subscribe", "focused-workspace-changed", "focused-monitor-changed", "focus-changed",
                                             "window-detected", "mode-changed"]
@@ -375,6 +378,7 @@ final class WorkspaceStore {
                         try Task.checkCancellation()
                         if source == .omniwm { failure = receiveOmniWM(line) ?? failure }
                         else if source == .rift { connectionError = nil; requestRefresh() }
+                        else if source == .kiwidesk { receiveKiwiDesk(line) }
                         else if let event = try? JSONDecoder().decode(AeroSpaceEvent.self, from: line) { receive(event) }
                     }
                     try Task.checkCancellation()
@@ -434,6 +438,13 @@ final class WorkspaceStore {
         if !response.ok { return response.failureMessage }
         if response.kind == "event" { requestRefresh() } else { connectionError = nil }
         return nil
+    }
+
+    /// KiwiDesk confirms a subscription with a status line, then sends one line per event.
+    private func receiveKiwiDesk(_ line: Data) {
+        guard let message = try? JSONDecoder().decode(KiwiDeskMessage.self, from: line), message.status != "error" else { return }
+        connectionError = nil
+        if message.event != nil { requestRefresh() }
     }
 
     func acceptMode(_ mode: String?) {
@@ -615,6 +626,8 @@ final class WorkspaceStore {
                         arguments = ["-m", "window", String(window.id), "--space", workspace]
                     case .rift:
                         arguments = ["execute", "workspace", "move-window", String(riftIndex!), String(window.id)]
+                    case .kiwidesk:
+                        arguments = ["move_to_space", workspace, String(window.id)]
                     default:
                         throw CommandFailure(message: "\(payload.source.title) does not support moving windows.")
                     }
