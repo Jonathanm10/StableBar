@@ -12,7 +12,7 @@ If a window manager arranges your windows, leave that switch off and give the wi
 - yabai: `external_bar` in your yabai configuration
 - OmniWM: `gaps.outer.top` in its `settings.toml`
 - Rift: `top` under `[settings.layout.gaps.outer]` in `~/.config/rift/config.toml`
-- KiwiDesk: it keeps a strip at the top free, enough for a bar of the default height; for a taller bar, raise its top outer gap with `KiwiDesk.set_gap_global({ top = … })` in its `init.lua`
+- KiwiDesk: if windows reach under the bar, raise its top outer gap with `KiwiDesk.set_gap_global({ top = … })` in its `init.lua`. KiwiDesk adds it below the strip it keeps at the top of the screen, and resets each gap you leave out to 10.
 
 For a bar at the bottom of the screen, give it a bottom gap instead, such as `gaps.outer.bottom` in AeroSpace.
 
