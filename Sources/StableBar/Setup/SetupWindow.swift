@@ -767,7 +767,7 @@ struct SetupCardView: View {
     var body: some View {
         VStack(spacing: 18) {
             Spacer()
-            Image(nsImage: NSApp.applicationIconImage)
+            Image(nsImage: StableBarIcon.image)
                 .resizable()
                 .frame(width: 96, height: 96)
                 .overlay(alignment: .bottomTrailing) {

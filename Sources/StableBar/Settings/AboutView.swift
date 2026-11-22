@@ -13,7 +13,7 @@ struct AboutView: View {
         Form {
             Section {
                 HStack(spacing: 16) {
-                    Image(nsImage: NSApplication.shared.applicationIconImage)
+                    Image(nsImage: StableBarIcon.image)
                         .resizable()
                         .frame(width: 64, height: 64)
                         .accessibilityHidden(true)

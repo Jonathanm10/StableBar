@@ -290,7 +290,7 @@ struct BarShareBadge: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(nsImage: NSApplication.shared.applicationIconImage).resizable().frame(width: 44, height: 44)
+            Image(nsImage: StableBarIcon.image).resizable().frame(width: 44, height: 44)
             VStack(alignment: .leading, spacing: 1) {
                 Text(verbatim: "StableBar").font(Self.wordmark)
                 Text(verbatim: "stablebar.app").font(.system(size: 13, weight: .medium)).opacity(0.88)
