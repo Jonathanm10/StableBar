@@ -13,11 +13,14 @@ final class WorkspaceManagerFinder {
     private(set) var scan = WorkspaceManagerScan()
     @ObservationIgnored private var task: Task<Void, Never>?
     @ObservationIgnored private let lookup: @Sendable () -> Set<WorkspaceSource>
+    @ObservationIgnored private var observation: NotificationObservation?
 
     init(lookup: @escaping @Sendable () -> Set<WorkspaceSource> = {
         WorkspaceSource.installed(path: shellEnvironment.withLock { $0["PATH", default: ""] })
     }) {
         self.lookup = lookup
+        // Until the login shell's PATH arrives, a scan misses what Homebrew installed.
+        observation = NotificationObservation(loginShellEnvironmentLoaded) { [weak self] in self?.send(.rescan) }
     }
 
     func send(_ event: WorkspaceManagerScan.Event) {
@@ -41,6 +44,19 @@ final class WorkspaceManagerFinder {
     deinit { task?.cancel() }
 }
 
+/// Stops observing when released, so a main-actor owner needn't reach the observer from its deinit.
+private final class NotificationObservation: @unchecked Sendable {
+    private let observer: any NSObjectProtocol
+
+    init(_ name: Notification.Name, perform: @escaping @MainActor @Sendable () -> Void) {
+        observer = NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { perform() }
+        }
+    }
+
+    deinit { NotificationCenter.default.removeObserver(observer) }
+}
+
 /// Settings' choice of workspace manager: the window managers found on this Mac, then macOS Spaces.
 struct WorkspaceManagerSettings: View {
     let editor: ConfigurationEditor
@@ -54,17 +70,18 @@ struct WorkspaceManagerSettings: View {
 
     var body: some View {
         let source = editor.store.configuration?.workspaceSource ?? .aerospace
-        let managers = WorkspaceManagerOption.managers(found: finder.scan.found, configured: source)
-        let selected = (managers + [.spaces]).first { $0.source == source } ?? .spaces
+        let sections = WorkspaceManagerOption.sections(found: finder.scan.found, configured: source)
+        let selected = sections.joined().first { $0.source == source } ?? .spaces
         LabeledContent {
             HStack(spacing: 8) {
                 SettingsMenu(title: "Workspace manager", selectedTitle: selected.title) {
                     Picker("Workspace manager", selection: Binding(get: { source }, set: {
                         if $0 != source { editor.change(ConfigurationEdit(action: .workspaceSource, name: $0.rawValue)) }
                     })) {
-                        ForEach(managers) { Text($0.title).tag($0.source) }
-                        Divider()
-                        Text(WorkspaceManagerOption.spaces.title).tag(WorkspaceSource.spaces)
+                        ForEach(sections.indices, id: \.self) { index in
+                            if index > 0 { Divider() }
+                            ForEach(sections[index]) { Text($0.title).tag($0.source) }
+                        }
                     }
                     .pickerStyle(.inline)
                 }

@@ -100,12 +100,28 @@ import Testing
             return [.rift]
         })
         finder.send(.rescan)
+        try await awaitCondition { calls.withLock { $0 } == 1 }
         finder.send(.rescan)
         finder.send(.rescan)
-        release.signal()
-        try await awaitCondition { finder.scan.found != nil }
+        #expect(finder.scan.isScanning)
+        // Only checks that no other lookup starts meanwhile.
+        try await Task.sleep(for: .milliseconds(100))
         #expect(calls.withLock { $0 } == 1)
-        #expect(finder.scan.found == [.rift])
+        // One signal per possible lookup, so a wrongly started one can't hang the run.
+        for _ in 0..<3 { release.signal() }
+        try await awaitCondition { finder.scan.found == [.rift] }
+        #expect(calls.withLock { $0 } == 1)
+    }
+
+    @Test @MainActor func finderLooksAgainWhenTheLoginShellEnvironmentArrives() async throws {
+        let finder = WorkspaceManagerFinder(lookup: { [.aerospace] })
+        NotificationCenter.default.post(name: loginShellEnvironmentLoaded, object: nil)
+        try await awaitCondition { finder.scan.found == [.aerospace] }
+    }
+
+    @Test func theMenuLeavesOutAnEmptyManagersSection() {
+        #expect(WorkspaceManagerOption.sections(found: [], configured: .spaces) == [[.spaces]])
+        #expect(WorkspaceManagerOption.sections(found: [.yabai], configured: .spaces) == [[option(.yabai)], [.spaces]])
     }
 
     @Test func searchFindsTheWorkspaceManagerByRescan() {

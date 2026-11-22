@@ -374,6 +374,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let environment = Task {
                 let variables = try await readLoginShellEnvironment()
                 shellEnvironment.withLock { $0 = variables }
+                NotificationCenter.default.post(name: loginShellEnvironmentLoaded, object: nil)
             }
             // A profile can take much longer to read right after login, so the bar starts after 10 seconds
             // at most, and what started with the app's own environment runs again once the shell's arrives.

@@ -70,4 +70,9 @@ struct WorkspaceManagerOption: Equatable, Identifiable, Sendable {
             return WorkspaceManagerOption(source: source, isMissing: found != nil && !isFound)
         }
     }
+
+    /// The menu's sections, separated by dividers: the window managers, when there's one, then macOS Spaces.
+    static func sections(found: Set<WorkspaceSource>?, configured: WorkspaceSource) -> [[WorkspaceManagerOption]] {
+        [managers(found: found, configured: configured), [spaces]].filter { !$0.isEmpty }
+    }
 }

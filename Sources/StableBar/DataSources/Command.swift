@@ -3,6 +3,8 @@ import Foundation
 import os
 
 let shellEnvironment = OSAllocatedUnfairLock(initialState: ProcessInfo.processInfo.environment)
+/// Posted once `shellEnvironment` holds the login shell's environment instead of the app's own.
+let loginShellEnvironmentLoaded = Notification.Name("StableBarLoginShellEnvironmentLoaded")
 
 /// Reads the environment a login shell exports. Right after login, a profile that runs `brew shellenv`,
 /// keychain lookups or nvm can take far longer than usual, so a failed read is retried with backoff

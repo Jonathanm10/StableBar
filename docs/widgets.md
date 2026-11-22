@@ -85,7 +85,7 @@ App menus and the Apple menu follow the app that owns the macOS menu bar, even w
 
 ## Workspace managers
 
-The Workspaces widget shows the workspaces of AeroSpace, yabai, [OmniWM](#omniwm-workspaces), [Rift](#rift-workspaces) or [macOS Spaces](#macos-spaces-workspaces), set with `workspaceSource` at the top level of your configuration. **Workspace manager**, under **Settings → General → Workspaces**, lists the window managers found on this Mac, those whose command is on your login shell's `PATH` or, for OmniWM, inside its app, then macOS Spaces. It looks again each time General opens; after installing one while Settings is open, choose **Rescan**. A configured window manager that isn't found stays listed as not found, with a warning.
+The Workspaces widget shows the workspaces of AeroSpace, yabai, [OmniWM](#omniwm-workspaces), [Rift](#rift-workspaces) or [macOS Spaces](#macos-spaces-workspaces), set with `workspaceSource` at the top level of your configuration. **Workspace manager**, under **Settings → General → Workspaces**, lists the window managers found on this Mac, those whose command is on your login shell's `PATH` or, for OmniWM, inside its app, then macOS Spaces. It looks again each time General opens; after installing one while Settings is open, choose **Rescan**. Both use the `PATH` StableBar read when it started, so a window manager installed into a folder new to your `PATH`, as a first Homebrew install adds, shows once you quit and reopen StableBar. A configured window manager that isn't found stays listed as not found, with a warning.
 
 ## yabai workspaces
 
