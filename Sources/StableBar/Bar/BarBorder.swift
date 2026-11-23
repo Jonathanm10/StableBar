@@ -10,9 +10,11 @@ struct BarSurface: ViewModifier {
 
     func body(content: Content) -> some View {
         let style = store.barPresentation.barStyle(on: kind)
+        let fill = style.background ?? settings.background
         content
+            .modifier(FollowsBackground(fill: settings.glass.painted(fill, on: \.bar, reduceTransparency: reduceTransparency)))
             .clipShape(RoundedRectangle(cornerRadius: max(0, style.cornerRadius ?? 0)))
-            .modifier(GlassBackground(fill: style.background ?? settings.background, glass: settings.glass, surface: \.bar,
+            .modifier(GlassBackground(fill: fill, glass: settings.glass, surface: \.bar,
                                       shape: RoundedRectangle(cornerRadius: max(0, style.cornerRadius ?? 0))))
             .background {
                 // A see-through strip shows the popups' surface, which the theme pairs with its text.
@@ -32,10 +34,13 @@ struct GlassBackground<S: Shape>: ViewModifier {
     let glass: GlassSettings
     let surface: KeyPath<GlassSettings, Bool>
     let shape: S
+    /// Cast by the background alone, for a style whose `shadowFrom` is `shape`.
+    var shadow: WidgetAppearance? = nil
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     func body(content: Content) -> some View {
+        let painted = glass.painted(fill, on: surface, reduceTransparency: reduceTransparency)
         if #available(macOS 26, *), glass.enabled, glass[keyPath: surface], !reduceTransparency {
             // Keep one view structure while the color comes and goes (hover, open, data states): switching
             // branches rebuilds the content, which dismantles a widget's popup anchor and closes its popup.
@@ -43,8 +48,9 @@ struct GlassBackground<S: Shape>: ViewModifier {
             content.background {
                 ZStack {
                     Color.clear.glassEffect(visible ? .clear : .identity, in: shape)
-                    shape.fill((fill?.shapeStyle ?? AnyShapeStyle(Color.clear)).opacity(1 - glass.transparency))
+                    shape.fill(painted?.shapeStyle ?? AnyShapeStyle(Color.clear))
                 }
+                .styledShadow(shadow)
             }
         } else {
             let empty = if surface != \GlassSettings.popups {
@@ -54,10 +60,17 @@ struct GlassBackground<S: Shape>: ViewModifier {
             } else {
                 AnyShapeStyle(.regularMaterial)
             }
-            // Widgets keep their fill, tints included: they sit on the bar or a popup, which are opaque.
-            let fill = reduceTransparency && surface != \GlassSettings.widgets ? self.fill?.opaque : self.fill
-            content.background(fill?.shapeStyle ?? empty, in: shape)
+            content.background { shape.fill(painted?.shapeStyle ?? empty).styledShadow(shadow) }
         }
+    }
+}
+
+extension GlassSettings {
+    /// `fill` as `GlassBackground` paints it on `surface`: faded by the transparency on Liquid Glass, and opaque under
+    /// Reduce Transparency except on widgets, which keep their tints since they sit on the opaque bar or a popup.
+    func painted(_ fill: BackgroundFill?, on surface: KeyPath<GlassSettings, Bool>, reduceTransparency: Bool) -> BackgroundFill? {
+        if #available(macOS 26, *), enabled, self[keyPath: surface], !reduceTransparency { return fill?.faded(1 - transparency) }
+        return reduceTransparency && surface != \GlassSettings.widgets ? fill?.opaque : fill
     }
 }
 
@@ -69,6 +82,14 @@ private extension BackgroundFill {
             .gradient(BackgroundGradient(colors: gradient.colors.map(\.opaque), angle: gradient.angle, locations: gradient.locations))
         }
     }
+
+    func faded(_ opacity: Double) -> BackgroundFill {
+        switch self {
+        case let .color(color): .color(color.faded(opacity))
+        case let .gradient(gradient):
+            .gradient(BackgroundGradient(colors: gradient.colors.map { $0.faded(opacity) }, angle: gradient.angle, locations: gradient.locations))
+        }
+    }
 }
 
 private extension HexColor {
@@ -76,6 +97,11 @@ private extension HexColor {
     /// it, and a popup hides its background while a morph card draws it.
     var opaque: HexColor {
         HexColor(light: light & 0xff == 0 ? light : light | 0xff, dark: dark & 0xff == 0 ? dark : dark | 0xff)
+    }
+
+    func faded(_ opacity: Double) -> HexColor {
+        func fade(_ rgba: UInt32) -> UInt32 { rgba & ~0xff | UInt32((Double(rgba & 0xff) * opacity).rounded()) }
+        return HexColor(light: fade(light), dark: fade(dark))
     }
 }
 

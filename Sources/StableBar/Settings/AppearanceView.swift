@@ -32,10 +32,6 @@ struct AppearanceView: View {
                     VStack(alignment: .leading, spacing: 0) {
                         header
                         scopeLine
-                        if let configuration = store.configuration {
-                            ThemePreviewStrip(look: screen.map(configuration.onScreen) ?? configuration, appearance: appearance)
-                                .padding(.top, 12).padding(.bottom, 4)
-                        }
                         themes(appearance)
                         if screen == nil, editor.editingProfile == nil, !gallery.linkedThemeIsActive, let theme = gallery.selectedChoice {
                             ThemeEditsLine(editor: editor, theme: theme).padding(.top, 12)
@@ -88,22 +84,28 @@ struct AppearanceView: View {
         let bar = editor.fields(["bar"], on: screen, values: editor.values("bar", on: screen))
         let source = store.propertySources(path: bar.path, key: "appearance", defaultsPath: bar.defaultsPath, values: bar.values)
         let saved = try? source.editingValue?.decoded(BarAppearance.self)
-        return HStack(spacing: 10) {
-            Text("Theme").font(.system(size: 15, weight: .semibold))
-            if let screen, screenTheme != nil {
-                Button("Use the theme of every screen") {
-                    editor.unset(["screens": .object([screen.rawValue: .object(["theme": .null])])])
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Text("Theme").font(.system(size: 15, weight: .semibold))
+                if let screen, screenTheme != nil {
+                    Button("Use the theme of every screen") {
+                        editor.unset(["screens": .object([screen.rawValue: .object(["theme": .null])])])
+                    }
+                    .buttonStyle(.link)
+                    .font(.system(size: 12))
                 }
-                .buttonStyle(.link)
-                .font(.system(size: 12))
+                Spacer()
+                if kinds.count > 1 || hasSetups || !themeProfiles.isEmpty { editingMenu }
+                RevertSettingButton(title: "Appearance", property: source, reset: source.saved.map { saved in { reset(saved) } })
+                SettingsSegments(selection: Binding(get: { saved }, set: {
+                    if $0 != saved { bar.set(["appearance": $0.map { .string($0.rawValue) } ?? .null]) }
+                }), options: [(nil, "Automatic"), (.light, "Light"), (.dark, "Dark")], stretches: false)
+                .fixedSize()
             }
-            Spacer()
-            if kinds.count > 1 || hasSetups || !themeProfiles.isEmpty { editingMenu }
-            RevertSettingButton(title: "Appearance", property: source, reset: source.saved.map { saved in { reset(saved) } })
-            SettingsSegments(selection: Binding(get: { saved }, set: {
-                if $0 != saved { bar.set(["appearance": $0.map { .string($0.rawValue) } ?? .null]) }
-            }), options: [(nil, "Automatic"), (.light, "Light"), (.dark, "Dark")], stretches: false)
-            .fixedSize()
+            if saved == nil {
+                bar.toggle("Follow the wallpaper", "followsWallpaper", default: false,
+                           hint: "On each display, the bar turns light or dark with the menu bar, which follows the wallpaper.")
+            }
         }
         .padding(.top, 18)
         .padding(.horizontal, 2)
@@ -195,7 +197,8 @@ struct AppearanceView: View {
             ForEach(sections, id: \.title) { section in
                 Text(section.title).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(.secondary)
                     .padding(.top, 8).padding(.horizontal, 2)
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], spacing: 10) {
+                let columns = [GridItem(.adaptive(minimum: section.title == "Included" ? 220 : 150), spacing: 10)]
+                LazyVGrid(columns: columns, spacing: 10) {
                     ForEach(section.items) { card($0, appearance: appearance) }
                 }
             }
@@ -217,7 +220,7 @@ struct AppearanceView: View {
     private var gallerySections: [(title: String, items: [ThemeItem])] {
         let installed = gallery.choices.onePerTheme(keeping: Set([gallery.selectedKey] + (screenTheme.map { [$0.key] } ?? [])))
             .filter { !$0.isBundled }
-        let isYours = { (choice: ThemeChoice) in [.installed, .local, .saved, .themeLink, .barLink].contains(gallery.source(of: choice)) }
+        let isYours = { (choice: ThemeChoice) in [.installed, .local, .saved, .themeLink, .barLink, .retired].contains(gallery.source(of: choice)) }
         let yours = installed.filter(isYours)
         let fromSources = installed.filter { !isYours($0) }.map(ThemeItem.installed)
             + gallery.storeThemes.map(ThemeItem.store)
@@ -231,15 +234,17 @@ struct AppearanceView: View {
         switch item {
         case let .installed(choice):
             let selected = screenTheme.map { $0.enabled ? $0.key : "built-in" } ?? gallery.selectedKey
-            return ThemeCard(title: choice.title, look: look, appearance: appearance, isSelected: selected == choice.key,
-                             isEdited: gallery.editedThemes.contains(choice.manifest.id),
+            return ThemeCard(title: choice.title, look: look, appearance: appearance,
+                             isSelected: selected == choice.key,
+                             isEdited: gallery.editedThemes.contains(choice.manifest.id), showsPopup: choice.isBundled,
                              progress: gallery.progress[item.id], error: gallery.error(for: item.id), source: gallery.source(of: choice),
                              showInFinder: choice.isBundled ? nil : { NSWorkspace.shared.activateFileViewerSelecting([choice.directory]) },
                              delete: choice.isBundled ? nil : { Task { await gallery.delete(choice) } }, inUse: themesInUse.contains(choice.key)) {
                 gallery.select(choice, on: screen, everyBar: editor.themeChangesEveryBar)
             }
         case let .store(entry):
-            return ThemeCard(title: entry.name, look: look, appearance: appearance, progress: gallery.progress[item.id],
+            return ThemeCard(title: entry.name, look: look, appearance: appearance,
+                             progress: gallery.progress[item.id],
                              error: gallery.error(for: item.id), isStore: true,
                              source: entry.sourceID == PackageSource.storeID ? nil : .privateSource(gallery.sourceName(entry.sourceID))) {
                 Task { await gallery.get(entry, on: screen, everyBar: editor.themeChangesEveryBar) }
@@ -247,21 +252,23 @@ struct AppearanceView: View {
         }
     }
 
-    /// Customize's sections in one card, each a row that opens its rows under it.
+    /// Customize's sections, each a card whose row opens its rows under it.
     private var customize: some View {
         let everyBar = editor.themeChangesEveryBar
-        return VStack(spacing: 0) {
+        return VStack(spacing: 10) {
             ForEach(customizeSections, id: \.title) { section in
                 let isOpen = expanded[section.title] ?? !section.changes.isEmpty
-                DisclosureRow(title: section.title, detail: changeCount(section.changes.count) ?? section.note, isOpen: isOpen,
-                              reset: editor.reset(section.changes, everyBar: everyBar)) { expanded[section.title] = !isOpen }
-                    .id(section.title)
-                if isOpen { section.rows() }
+                VStack(spacing: 0) {
+                    DisclosureRow(title: section.title, detail: changeCount(section.changes.count) ?? section.note, isOpen: isOpen,
+                                  reset: editor.reset(section.changes, everyBar: everyBar)) { expanded[section.title] = !isOpen }
+                    if isOpen { section.rows() }
+                }
+                .padding(.top, -1)
+                .settingsCard()
+                .id(section.title)
             }
         }
         .labeledContentStyle(GroupRowStyle())
-        .padding(.top, -1)
-        .settingsCard()
         .padding(.top, 14)
     }
 
@@ -282,12 +289,15 @@ struct AppearanceView: View {
                                        spacing: editor.fields(["popupDefaults"], on: screen, values: editor.values("popupDefaults", on: screen)),
                                        bar: barFields, fontFamilies: fontFamilies)
         let barLook = BarLookSection(editor: editor, bar: barFields,
-                                     style: editor.fields(["bar", "style"], on: screen, values: (try? bar["style"]?.decoded([String: ConfigurationValue].self)) ?? [:]))
+                                     style: editor.fields(["bar", "style"], on: screen, values: (try? bar["style"]?.decoded([String: ConfigurationValue].self)) ?? [:]),
+                                     divider: editor.fields(["bar", "divider"], on: screen, values: (try? bar["divider"]?.decoded([String: ConfigurationValue].self)) ?? [:]))
         let workspaces = editor.fields(["workspaceDefaults"], on: screen, values: editor.values("workspaceDefaults", on: screen))
         let glass = editor.fields(["bar", "glass"], on: screen, values: (try? bar["glass"]?.decoded([String: ConfigurationValue].self)) ?? [:])
         let roles = editor.fields(["roles"], on: screen, values: [:])
         return [
-            CustomizeSection(title: "Colors", changes: editor.lookChanges(under: [tokens.path])) { AnyView(colors(tokens)) },
+            CustomizeSection(title: "Colors", changes: editor.lookChanges(under: [tokens.path, "\(barFields.path).textFollowsBackground"])) {
+                AnyView(colors(tokens, bar: barFields))
+            },
             CustomizeSection(title: "Widgets", changes: editor.lookChanges(under: widgets.paths)) { AnyView(widgets.rows) },
             CustomizeSection(title: "Groups", changes: editor.lookChanges(under: groups.paths)) { AnyView(groups.rows) },
             CustomizeSection(title: "Popups", changes: editor.lookChanges(under: popups.paths)) { AnyView(popups.rows) },
@@ -305,7 +315,9 @@ struct AppearanceView: View {
         ]
     }
 
-    @ViewBuilder private func colors(_ tokens: StyleFields) -> some View {
+    @ViewBuilder private func colors(_ tokens: StyleFields, bar: StyleFields) -> some View {
+        bar.toggle("Text follows its background", "textFollowsBackground", default: false,
+                   hint: "A widget's text turns light or dark where the theme's would be hard to read on what's behind it.")
         LightDarkHeader()
         ForEach(store.themeTokenColors(in: document).filter(\.isShared)) { token in
             let property = store.propertySources(path: tokens.path, key: token.name, defaultsPath: tokens.defaultsPath, values: tokens.values)
@@ -339,24 +351,6 @@ struct AppearanceView: View {
         do { try store.removePropertySource(source, everyBar: editor.themeChangesEveryBar) }
         catch { store.customizationHistory.error = errorMessage(error) }
     }
-}
-
-struct ThemePreviewStrip: View {
-    let look: Configuration
-    let appearance: BarAppearance
-
-    var body: some View {
-        ThemeSampleBar(look: look)
-            .background(SampleWallpaper())
-            .clipShape(RoundedRectangle(cornerRadius: 9))
-            .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(SettingsPalette.groupBorder))
-            .environment(\.colorScheme, appearance.colorScheme)
-            .accessibilityHidden(true)
-    }
-}
-
-struct SampleWallpaper: View {
-    var body: some View { Wallpaper() }
 }
 
 /// One of Customize's sections, with the selected theme's edits in it.

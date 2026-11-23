@@ -83,7 +83,8 @@ final class AppMenu: NSObject {
                 for delay in [0, 250, 500, 1000, 2000] {
                     try await sleep(.milliseconds(delay))
                     guard let self else { return }
-                    if try await readItems() { return }
+                    // An app that is still launching can list no menus yet, so an empty read is tried again too.
+                    if try await readItems(), !isTrusted || app == nil || !items.isEmpty { return }
                 }
             } catch {}
         }

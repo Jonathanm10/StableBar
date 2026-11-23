@@ -36,7 +36,12 @@ struct ThemeEditsLine: View {
                         ThemeEditList(store: editor.store, changes: edits.changes, theme: name) { change in
                             if let edit = edits.removal(of: [change]) { editor.change(edit, everyBar: editor.themeChangesEveryBar) }
                         } actions: { change in
-                            Button("Apply to Every Theme") { editor.change(edits.applyingToEveryTheme(change), everyBar: editor.themeChangesEveryBar) }
+                            Button("Apply to Every Theme") {
+                                do {
+                                    editor.change(try edits.applyingToEveryTheme(change, themes: gallery.choices, store: editor.store.configurationStore),
+                                                  everyBar: editor.themeChangesEveryBar)
+                                } catch { editor.error = errorMessage(error) }
+                            }
                         }
                         .padding(.leading, 14)
                         .padding(.trailing, 8)

@@ -14,9 +14,10 @@ final class BarShareWindow: NSObject, NSWindowDelegate {
     func show(store: BarStore, screen: NSScreen) {
         self.store = store
         store.barEditing.end()
-        let share = BarShare(store: store, display: BarDisplay(screen: screen), screen: screen.frame.size, menuBar: screen.menuBarHeight,
+        let display = BarDisplay(screen: screen)
+        let share = BarShare(store: store, display: display, screen: screen.frame.size, menuBar: screen.menuBarHeight,
                              wallpaper: NSWorkspace.shared.desktopImageURL(for: screen).flatMap(NSImage.init(contentsOf:)),
-                             defaults: .standard)
+                             menuBarScheme: MenuBarAppearance.shared.schemes[display.id], defaults: .standard)
         let host = NSHostingView(rootView: BarShareView(share: share) { [weak self] in self?.window?.performClose(nil) })
         if window == nil {
             // A title bar with nothing in it keeps the panel resizable and closable with ⌘W, behind a borderless look.
@@ -153,6 +154,8 @@ final class BarShare {
     @ObservationIgnored private let menuBar: Double
     /// Nil when the wallpaper has no still image, as a dynamic or aerial one can.
     @ObservationIgnored private let wallpaper: NSImage?
+    /// The look of the display's menu bar, which a bar that follows the wallpaper takes. Nil in scenes.
+    @ObservationIgnored private let menuBarScheme: ColorScheme?
     /// Nil where the badge's choice isn't kept, as in scenes.
     @ObservationIgnored private let defaults: UserDefaults?
     /// Whether `format`'s screen has a notch, which the image can leave out.
@@ -160,12 +163,14 @@ final class BarShare {
     /// The bar link and what it carries, or why the bar can't be shared as one.
     private(set) var link: Result<BarLink.Sharing, Error>?
 
-    init(store: BarStore, display: BarDisplay, screen: CGSize, menuBar: Double, wallpaper: NSImage?, defaults: UserDefaults? = nil) {
+    init(store: BarStore, display: BarDisplay, screen: CGSize, menuBar: Double, wallpaper: NSImage?, menuBarScheme: ColorScheme? = nil,
+         defaults: UserDefaults? = nil) {
         self.store = store
         self.display = display
         self.screen = screen
         self.menuBar = menuBar
         self.wallpaper = wallpaper
+        self.menuBarScheme = menuBarScheme
         self.defaults = defaults
         badge = defaults?.object(forKey: Self.badgeKey) as? Bool ?? true
     }
@@ -224,6 +229,7 @@ final class BarShare {
             .frame(width: size.width, height: size.height, alignment: bottom ? .bottom : .top)
             .clipped()
             .environment(\.fixedDate, fixedDate)
+            .environment(\.menuBarScheme, menuBarScheme)
         let png = try? await OffscreenSnapshot.png(desktop, size: size, pixels: pixels, dark: dark, settle: .after(.seconds(1)),
                                                    name: "Share My Bar")
         guard !Task.isCancelled else { return }
@@ -366,15 +372,7 @@ struct BarShareView: View {
             if share.hasNotch { Toggle("Notch", isOn: $share.format.notch) }
             Toggle("StableBar Badge", isOn: $share.badge)
         } label: {
-            HStack(spacing: 6) {
-                Text(share.format.screen.title)
-                Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold)).opacity(0.8)
-            }
-            .font(.system(size: 12.5, weight: .semibold))
-            .padding(.horizontal, 12)
-            .frame(height: 28)
-            .glass(Capsule(style: .circular))
-            .contentShape(Capsule())
+            GlassPill { Text(share.format.screen.title) }
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
@@ -383,19 +381,9 @@ struct BarShareView: View {
     }
 
     private var closeButton: some View {
-        Button {
+        GlassCloseButton(title: "Close") {
             if showsLink { showsLink = false } else { close() }
-        } label: {
-            Image(systemName: "xmark")
-                .font(.system(size: 11, weight: .bold))
-                .frame(width: 28, height: 28)
-                .glass(Circle())
-                .contentShape(Circle())
         }
-        .buttonStyle(.plain)
-        .keyboardShortcut(.cancelAction)
-        .help("Close")
-        .accessibilityLabel("Close")
     }
 
     /// The image over a blur of itself, with the badge's spot.
@@ -474,7 +462,7 @@ struct BarShareView: View {
         HStack(spacing: 2) {
             ForEach(BarSharePreset.allCases) { preset in
                 Button(preset.label) { share.format.preset = preset }
-                    .buttonStyle(ShareToolStyle(selected: share.format.preset == preset))
+                    .buttonStyle(GlassButtonStyle(selected: share.format.preset == preset))
                     .accessibilityLabel(preset.title)
                     .accessibilityAddTraits(share.format.preset == preset ? .isSelected : [])
             }
@@ -485,7 +473,7 @@ struct BarShareView: View {
             Button(action: shareBar) {
                 Label("Share", systemImage: "square.and.arrow.up").labelStyle(.titleAndIcon)
             }
-            .buttonStyle(ShareToolStyle(selected: true))
+            .buttonStyle(GlassButtonStyle(selected: true))
             .keyboardShortcut(.defaultAction)
             .background(MenuAnchor(view: anchor))
             .disabled(share.image == nil)
@@ -500,7 +488,7 @@ struct BarShareView: View {
         Button(action: action) {
             Image(systemName: symbol).font(.system(size: 14, weight: .medium)).frame(width: 36)
         }
-        .buttonStyle(ShareToolStyle(selected: false, highlighted: selected, round: true))
+        .buttonStyle(GlassButtonStyle(selected: false, highlighted: selected, round: true))
         .help(title)
         .accessibilityLabel(title)
     }
@@ -520,7 +508,7 @@ struct BarShareView: View {
                     } label: {
                         Label(copied ? "Copied" : "Copy Link", systemImage: copied ? "checkmark" : "doc.on.doc").labelStyle(.titleAndIcon)
                     }
-                    .buttonStyle(ShareToolStyle(selected: true, compact: true))
+                    .buttonStyle(GlassButtonStyle(selected: true, size: .compact))
                     // While the image redraws, the link is still the last screen's.
                     .disabled(share.image == nil)
                 }
@@ -627,40 +615,6 @@ struct WindowDragArea: NSViewRepresentable {
 
     func makeNSView(context: Context) -> DragView { DragView() }
     func updateNSView(_ nsView: DragView, context: Context) {}
-}
-
-/// A translucent fill and edge over the blurred image, for the window's controls. Their capsules are circular: a
-/// continuous capsule's edge gets a stray straight line beside it in offscreen drawings.
-private extension View {
-    func glass(_ shape: some InsettableShape) -> some View {
-        background(.white.opacity(0.15), in: shape)
-            .overlay(shape.strokeBorder(.white.opacity(0.24), lineWidth: 0.5))
-    }
-}
-
-/// A button in the toolbar: a shape, a tool or Share, which is `selected` like the current shape.
-private struct ShareToolStyle: ButtonStyle {
-    var selected: Bool
-    var highlighted = false
-    var round = false
-    var compact = false
-    @Environment(\.isEnabled) private var isEnabled
-
-    func makeBody(configuration: ButtonStyleConfiguration) -> some View {
-        configuration.label
-            .font(.system(size: compact ? 11.5 : 12, weight: .semibold))
-            .foregroundStyle(selected ? Color.black : Color.white)
-            .padding(.horizontal, round ? 0 : compact ? 10 : 12)
-            .frame(minWidth: compact ? 0 : 36, minHeight: compact ? 26 : 36)
-            .background(fill(pressed: configuration.isPressed), in: Capsule())
-            .opacity(isEnabled ? 1 : 0.4)
-            .contentShape(Capsule())
-    }
-
-    private func fill(pressed: Bool) -> Color {
-        if selected { return .white.opacity(pressed ? 0.75 : 0.92) }
-        return .white.opacity(pressed ? 0.28 : highlighted ? 0.22 : 0)
-    }
 }
 
 /// A row of "What it shares": the look, a widget the link carries, or what stays on this Mac.

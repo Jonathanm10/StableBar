@@ -1,0 +1,57 @@
+{
+  "$schema": "../scene.schema.json",
+  "configuration": {
+    "theme": {
+      "id": "clear"
+    },
+    "workspaceSource": "aerospace",
+    "widgets": [
+      {
+        "id": "apple",
+        "type": "appleMenu",
+        "position": "left"
+      },
+      {
+        "id": "app-menu",
+        "type": "appMenu",
+        "position": "left",
+        "expandOnHover": true
+      },
+      {
+        "id": "battery",
+        "type": "battery",
+        "position": "right",
+        "details": true
+      },
+      {
+        "id": "clock",
+        "type": "clock",
+        "position": "right"
+      }
+    ]
+  },
+  "outputs": {
+    "battery": {
+      "text": "82%",
+      "icon": "battery.75percent",
+      "values": {
+        "percent": 0.82
+      },
+      "fields": {
+        "percent": "82",
+        "state": "battery",
+        "present": "true",
+        "health": "normal",
+        "timeRemaining": "285"
+      }
+    }
+  },
+  "windowsUnderBar": "aerospace",
+  "activeApp": "com.apple.Safari",
+  "draw": "setup",
+  "setup": {
+    "step": "allow",
+    "preset": "minimal",
+    "menuBarHides": true
+  }
+}

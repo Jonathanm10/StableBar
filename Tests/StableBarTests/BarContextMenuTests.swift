@@ -106,48 +106,50 @@ private final class FakeMenuBarItem: @unchecked Sendable {
     }
 }
 
-@Test @MainActor func rightClickingAnAppsItemOnTheBarOpensItLikeAClick() async throws {
-    let dock = try #require(NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first)
-    let fake = FakeMenuBarItem(owner: dock.processIdentifier)
-    let fixture = try ThemeGalleryFixture(#"""
-    {"widgets":[{"id":"items","type":"menuBarItems","position":"left","shown":[{"app":"com.apple.dock"}],"hidden":["symbol"]}]}
-    """#)
-    defer { fixture.close() }
-    let store = try fixture.store(appMenu: AppMenu(checkAccess: { true }, readAttribute: fake.read))
-    defer { store.stop() }
-    #expect(await store.appMenu.readMenuBarItems(requestingAccess: false))
-    try #require(store.appMenu.menuBarItems.map(\.entry.title) == ["Fake item"])
-    let bar = HostedBar(store: store)
-    defer { bar.window.close() }
+extension KeyWindowTests {
+    @Test func rightClickingAnAppsItemOnTheBarOpensItLikeAClick() async throws {
+        let dock = try #require(NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first)
+        let fake = FakeMenuBarItem(owner: dock.processIdentifier)
+        let fixture = try ThemeGalleryFixture(#"""
+        {"widgets":[{"id":"items","type":"menuBarItems","position":"left","shown":[{"app":"com.apple.dock"}],"hidden":["symbol"]}]}
+        """#)
+        defer { fixture.close() }
+        let store = try fixture.store(appMenu: AppMenu(checkAccess: { true }, readAttribute: fake.read))
+        defer { store.stop() }
+        #expect(await store.appMenu.readMenuBarItems(requestingAccess: false))
+        try #require(store.appMenu.menuBarItems.map(\.entry.title) == ["Fake item"])
+        let bar = HostedBar(store: store)
+        defer { bar.window.close() }
 
-    // Nothing here opens a menu: an open menu tracks the mouse, and a stray click in it could choose Quit StableBar.
-    var found: RightClickView?
-    try await awaitCondition {
-        bar.host.layoutSubtreeIfNeeded()
-        found = descendants(of: bar.host).lazy.compactMap { $0 as? RightClickView }.first
-        return found != nil
-    }
-    let capture = try #require(found)
-    let center = bar.host.convert(CGPoint(x: capture.bounds.midX, y: capture.bounds.midY), from: capture)
-    #expect(!bar.menu(at: center).contains("Hide"), "The item no longer has a menu of StableBar's commands")
+        // Nothing here opens a menu: an open menu tracks the mouse, and a stray click in it could choose Quit StableBar.
+        var found: RightClickView?
+        try await awaitCondition {
+            bar.host.layoutSubtreeIfNeeded()
+            found = descendants(of: bar.host).lazy.compactMap { $0 as? RightClickView }.first
+            return found != nil
+        }
+        let capture = try #require(found)
+        let center = bar.host.convert(CGPoint(x: capture.bounds.midX, y: capture.bounds.midY), from: capture)
+        #expect(!bar.menu(at: center).contains("Hide"), "The item no longer has a menu of StableBar's commands")
 
-    // A clicked popup becomes the key window. Tests running alongside send actions to theirs, so it gets key status back
-    // before this test next waits.
-    let keyWindow = NSApplication.shared.keyWindow
-    func closePopup() {
-        store.popup.close()
-        keyWindow?.makeKey()
-    }
-    defer { closePopup() }
-    capture.rightMouseDown(with: try #require(bar.rightMouseDown(at: center)))
-    #expect(store.popup.isOpen, "A right-click opens the item's menu, as a click does")
+        // A clicked popup becomes the key window. Tests running alongside send actions to theirs, so it gets key status back
+        // before this test next waits.
+        let keyWindow = NSApplication.shared.keyWindow
+        func closePopup() {
+            store.popup.close()
+            keyWindow?.makeKey()
+        }
+        defer { closePopup() }
+        capture.rightMouseDown(with: try #require(bar.rightMouseDown(at: center)))
+        #expect(store.popup.isOpen, "A right-click opens the item's menu, as a click does")
 
-    closePopup()
-    try #require(!store.popup.isOpen)
-    for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-        bar.window.sendEvent(try #require(bar.mouseEvent(type, at: center)))
+        closePopup()
+        try #require(!store.popup.isOpen)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            bar.window.sendEvent(try #require(bar.mouseEvent(type, at: center)))
+        }
+        #expect(store.popup.isOpen, "A click still reaches the item beneath the view that takes right-clicks")
     }
-    #expect(store.popup.isOpen, "A click still reaches the item beneath the view that takes right-clicks")
 }
 
 /// Clicks the item of a bar that shows `fake` and has `appMenu` with `button`, once the bar has laid it out.

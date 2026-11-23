@@ -6,7 +6,7 @@ let themeLookKeys = ["defaults", "popupDefaults", "groupDefaults", "roles", "wor
 /// What a widget's Style tab sets, also saved as an edit of the selected theme.
 let widgetLookKeys: Set<String> = ["style", "background", "popupBackground", "tooltipBackground"]
 /// The style properties a widget's Style tab shows.
-let widgetStyleKeys = ["foreground", "background", "accent", "accentText", "shadowColor", "fontName", "fontWeight", "fontSize",
+let widgetStyleKeys = ["foreground", "background", "accent", "accentText", "shadowColor", "appIcons", "fontName", "fontWeight", "fontSize",
                        "paddingHorizontal", "paddingVertical", "paddingLeading", "paddingTrailing", "paddingTop", "paddingBottom",
                        "cornerRadius", "borderWidth", "borderColor"]
 
@@ -115,7 +115,7 @@ struct ThemeEdits {
 
     /// The theme's changes to one widget's style.
     func widgetChanges(_ id: String) -> [ThemeEdit] {
-        changes.filter { $0.path.starts(with: ["widgetOverrides", id]) }
+        changes.filter { $0.path.starts(with: ["widgetOverrides", id]) && widgetLookKeys.contains($0.path[2]) }
     }
 
     /// Removes `changes` from the theme's profile, and the profile itself once nothing else is left in it.
@@ -142,9 +142,22 @@ struct ThemeEdits {
 
     var revertEdit: ConfigurationEdit? { removal(of: changes) }
 
-    /// Moves `change` out of the theme's profile into the main file, so it applies under every theme.
-    func applyingToEveryTheme(_ change: ThemeEdit) -> [ConfigurationEdit] {
-        [removal(of: [change]), change.setting()].compactMap { $0 }
+    /// Moves `change` out of the theme's profile into the main file, so it applies under every theme. A group a widget
+    /// joins gets an empty entry there too, so that every theme has it. That entry doesn't take others, as the theme's
+    /// group may, and a profile for one theme can move a widget, so the result must load under each of `themes` that
+    /// loads now.
+    @MainActor func applyingToEveryTheme(_ change: ThemeEdit, themes: [ThemeChoice], store: ConfigurationStore) throws -> [ConfigurationEdit] {
+        var edits = [removal(of: [change]), change.setting()].compactMap { $0 }
+        if change.path.first == "widgetOverrides", change.path.last == "group", case let .string(group) = change.value {
+            edits.append(ConfigurationEdit(action: .groups, properties: [group: .object([:])]))
+            for theme in themes where (try? store.configurationTryingTheme(theme, edits: [])) != nil {
+                guard (try? store.configurationTryingTheme(theme, edits: edits)) != nil else {
+                    throw CommandFailure(message: "Only this theme lets the group “\(friendly(group))” hold widgets in more than one "
+                                         + "position, so this widget can join it under this theme only.")
+                }
+            }
+        }
+        return edits
     }
 
     /// The profile that keeps the edits: the existing one, else "<theme> edits", numbered past the main file's other
@@ -167,7 +180,7 @@ struct ThemeEdits {
 }
 
 /// The look values in `document`, one per property: a light/dark pair or a gradient counts as one value. `widgets` names
-/// the widgets whose styles count, from `widgetOverrides`; nil leaves widget styles out.
+/// the widgets whose styles and groups count, from `widgetOverrides`; nil leaves them out.
 private func lookValues(in document: [String: ConfigurationValue], tokens: (String) -> Bool, widgets names: [String: String]?,
                         theme: [String: ConfigurationValue]) -> [ThemeEdit] {
     var found: [ThemeEdit] = []
@@ -210,7 +223,7 @@ private func lookValues(in document: [String: ConfigurationValue], tokens: (Stri
     }
     if let names, case let .object(widgets) = document["widgetOverrides"] {
         for case let (id, .object(widget)) in widgets {
-            for (key, value) in widget where widgetLookKeys.contains(key) {
+            for (key, value) in widget where widgetLookKeys.contains(key) || key == "group" {
                 for (path, leaf) in lookLeaves(value, path: ["widgetOverrides", id, key]) {
                     add(path, leaf, section: names[id] ?? friendly(id), title: styleTitle(path.dropFirst(2).filter { $0 != "style" }))
                 }

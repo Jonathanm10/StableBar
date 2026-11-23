@@ -5,11 +5,15 @@ import SwiftUI
 /// appears on screen.
 @MainActor
 enum OffscreenSnapshot {
-    private static let darkBackdrop = Bundle.main.url(forResource: "SetupDusk", withExtension: "heic").flatMap(NSImage.init(contentsOf:))
+    /// StableBar's own wallpaper, or nil where the app's resources aren't bundled, as in tests. Decoded once: an image
+    /// read lazily is decoded again each time a preview draws it.
+    static let wallpaper = bundledWallpaperURL.flatMap { CGImageSourceCreateWithURL($0 as CFURL, nil) }
+        .flatMap { CGImageSourceCreateImageAtIndex($0, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary) }
+        .map { NSImage(cgImage: $0, size: .zero) }
 
-    /// The setup tour's wallpaper, or a flat color where the app's resources aren't bundled, as in tests.
+    /// StableBar's own wallpaper, or a flat color where the app's resources aren't bundled, as in tests.
     @ViewBuilder static func backdrop(dark: Bool) -> some View {
-        if let image = dark ? darkBackdrop : Wallpaper.image {
+        if let image = wallpaper {
             Image(nsImage: image).resizable().scaledToFill()
         } else {
             Color(white: dark ? 0.16 : 0.9)
@@ -55,7 +59,7 @@ enum OffscreenSnapshot {
         let still = if case .still = settle { true } else { false }
         // Views drawn once they hold still are drawn at rest: with their animations off, a change shows in full in the
         // next drawing, rather than over animation frames that a busy process can fall behind on.
-        let view = NSHostingView(rootView: content.transaction { transaction in
+        let view = NSHostingView(rootView: content.environment(\.offscreenSnapshot, true).transaction { transaction in
             guard still else { return }
             transaction.animation = nil
             transaction.disablesAnimations = true

@@ -1352,35 +1352,37 @@ private struct TurnsPopup: View {
     #expect(gap < 1, "Its answer is followed as it arrives")
 }
 
-@Test @MainActor func shiftReturnStartsANewLineInAnInputThatWrapsAndReturnSends() async throws {
-    let block = try JSONDecoder().decode(PopupBlock.self, from: Data(#"""
-    {"type":"input","title":"Question","wrap":true,"sendButton":true,"autofocus":true,"onSubmit":"send"}
-    """#.utf8))
-    var sent: [String] = []
-    let window = NSPanel(contentRect: NSRect(x: -6000, y: -6000, width: 300, height: 200), styleMask: [.titled, .nonactivatingPanel],
-                         backing: .buffered, defer: false)
-    window.isReleasedWhenClosed = false
-    window.contentView = NSHostingView(rootView: PopupBlockView(block: block, inheritedStyle: WidgetStyle(fontSize: 13), fields: [:],
-                                                                context: BlockContext(open: { _ in }, runAction: { _, environment in
-                                                                    sent.append(environment["VALUE"] ?? "")
-                                                                })).frame(width: 300))
-    window.makeKeyAndOrderFront(nil)
-    defer { window.close() }
-    try await waitForPopup { window.firstResponder is NSTextView }
-    func type(_ characters: String, code: UInt16, flags: NSEvent.ModifierFlags = []) throws {
-        for type in [NSEvent.EventType.keyDown, .keyUp] {
-            window.sendEvent(try #require(NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags, timestamp: 0,
-                                                           windowNumber: window.windowNumber, context: nil, characters: characters,
-                                                           charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)))
+extension KeyWindowTests {
+    @Test func shiftReturnStartsANewLineInAnInputThatWrapsAndReturnSends() async throws {
+        let block = try JSONDecoder().decode(PopupBlock.self, from: Data(#"""
+        {"type":"input","title":"Question","wrap":true,"sendButton":true,"autofocus":true,"onSubmit":"send"}
+        """#.utf8))
+        var sent: [String] = []
+        let window = NSPanel(contentRect: NSRect(x: -6000, y: -6000, width: 300, height: 200), styleMask: [.titled, .nonactivatingPanel],
+                             backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: PopupBlockView(block: block, inheritedStyle: WidgetStyle(fontSize: 13), fields: [:],
+                                                                    context: BlockContext(open: { _ in }, runAction: { _, environment in
+                                                                        sent.append(environment["VALUE"] ?? "")
+                                                                    })).frame(width: 300))
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+        try await awaitCondition { window.firstResponder is NSTextView }
+        func type(_ characters: String, code: UInt16, flags: NSEvent.ModifierFlags = []) throws {
+            for type in [NSEvent.EventType.keyDown, .keyUp] {
+                window.sendEvent(try #require(NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags, timestamp: 0,
+                                                               windowNumber: window.windowNumber, context: nil, characters: characters,
+                                                               charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)))
+            }
         }
+        try type("a", code: 0)
+        try type("\r", code: 36, flags: .shift)
+        try type("b", code: 11)
+        try await waitForPopup { (window.firstResponder as? NSTextView)?.string == "a\nb" }
+        #expect((window.firstResponder as? NSTextView)?.string == "a\nb")
+        #expect(sent.isEmpty)
+        try type("\r", code: 36)
+        try await waitForPopup { !sent.isEmpty }
+        #expect(sent == ["a\nb"])
     }
-    try type("a", code: 0)
-    try type("\r", code: 36, flags: .shift)
-    try type("b", code: 11)
-    try await waitForPopup { (window.firstResponder as? NSTextView)?.string == "a\nb" }
-    #expect((window.firstResponder as? NSTextView)?.string == "a\nb")
-    #expect(sent.isEmpty)
-    try type("\r", code: 36)
-    try await waitForPopup { !sent.isEmpty }
-    #expect(sent == ["a\nb"])
 }

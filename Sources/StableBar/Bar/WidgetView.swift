@@ -34,6 +34,7 @@ struct WidgetView: View {
     @State private var hovered = false
     @State private var popupAnchor = NSView()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.measuringBarWidths) private var measuring
     @Environment(\.barUnitID) private var unitID
@@ -44,6 +45,7 @@ struct WidgetView: View {
     @Environment(\.barFocus) private var barFocus
     @Environment(\.focusesWidgets) private var focusesWidgets
     @Environment(\.macOSVersion) private var macOSVersion
+    @Environment(\.sampleAppMenus) private var sampleAppMenus
 
     private var resolution: ResolvedWidgetStyle {
         store.barPresentation.presentations[widget.id]?.style(on: screenKind) ?? ResolvedWidgetStyle(base: resolveStyle([defaults, widget.barStyle]))
@@ -246,12 +248,17 @@ struct WidgetView: View {
             .frame(width: appearance.width, height: style.height.map { CGFloat($0) })
             .frame(minWidth: style.minWidth.map { CGFloat($0) }, maxWidth: style.maxWidth.map { CGFloat($0) })
             .contentShape(Rectangle())
+        let glass = store.configuration?.bar(on: screenKind).glass ?? GlassSettings()
         clickable(tile, output: output, isOpen: isOpen)
         .font(appearance.font)
         .foregroundStyle(appearance.foreground)
         .styledSymbolVariant(style.symbolVariant)
-        .modifier(GlassBackground(fill: style.background, glass: store.configuration?.bar(on: screenKind).glass ?? GlassSettings(), surface: \.widgets,
-                                  shape: RoundedRectangle(cornerRadius: appearance.cornerRadius)))
+        // Without a text color, a widget draws in `.primary`.
+        .modifier(FollowsBackground(fill: glass.painted(style.background, on: \.widgets, reduceTransparency: reduceTransparency),
+                                    text: style.foreground ?? HexColor(light: 0x000000d9, dark: 0xffffffd9)))
+        .modifier(GlassBackground(fill: style.background, glass: glass, surface: \.widgets,
+                                  shape: RoundedRectangle(cornerRadius: appearance.cornerRadius),
+                                  shadow: appearance.shadowFrom == .shape ? appearance : nil))
         .overlay {
             if contrast == .increased && style.background != nil {
                 // SwiftUI draws a RoundedRectangle's border as a layer border, which drawing offscreen, as the scenes do, gives
@@ -269,7 +276,7 @@ struct WidgetView: View {
                 Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red).font(.system(size: 8)).help(error)
             }
         }
-        .shadow(color: appearance.shadowColor, radius: appearance.shadowRadius, y: 1)
+        .styledShadow(appearance.shadowFrom == .content ? appearance : nil)
         .overlay(alignment: .bottom) {
             if let overlay = widget.overlay {
                 timed { date in
@@ -383,7 +390,9 @@ struct WidgetView: View {
         case let .appMenu(expandOnHover, displayMode) where widget.layout == nil:
             let expands = expandOnHover && moreWidgetsAnchor == nil
             let appearance = WidgetAppearance(resolution.style(hovered: false, open: open), defaults: WidgetStyle())
-            AppMenuView(appMenu: store.appMenu, items: store.appMenu.items, expandOnHover: expands, hovering: hovered,
+            let items = store.appMenu.items.isEmpty ? sampleAppMenus.map { AppMenuItem(title: $0, element: AXUIElementCreateSystemWide()) }
+                : store.appMenu.items
+            AppMenuView(appMenu: store.appMenu, items: items, expandOnHover: expands, hovering: hovered,
                         expanded: barExpansion.map { $0 == .granted } ?? (store.barPresentation.presentations[widget.id]?.expandedDisplays.contains(monitor) == true),
                         displayMode: displayMode, appIcon: store.appMenu.menuOwnerIcon,
                         appearance: appearance, padding: padding,

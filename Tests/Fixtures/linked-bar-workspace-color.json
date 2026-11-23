@@ -1,0 +1,11 @@
+{
+  "package": "{\n  \"entry\": \"config.json\",\n  \"id\": \"shared-workspace-color\",\n  \"kind\": \"theme\",\n  \"name\": \"Red workspaces (shared)\",\n  \"version\": \"1.0.0\"\n}",
+  "config": "{\"roles\": {\"secondary\": {\"background\": \"#f9d3da\"}}}",
+  "widgets": [
+    { "id": "workspaces", "type": "workspaces", "position": "left", "role": "secondary", "style": { "foreground": "#d20f39" } },
+    { "id": "clock", "type": "clock", "position": "right", "format": "EEE d MMM  HH:mm" }
+  ],
+  "packages": [],
+  "widgetOverrides": {},
+  "widgetOrder": ["workspaces", "clock"]
+}

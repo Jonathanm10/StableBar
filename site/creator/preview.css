@@ -79,6 +79,17 @@
 }
 .theme-preview.preview-ws-fill .preview-workspace.is-focused { background: var(--ws-ind); }
 
+.theme-preview.preview-ws-cells .preview-workspace::before {
+  content: "";
+  position: absolute;
+  inset: var(--w-py) 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--ws-cell);
+}
+
+.theme-preview.preview-ws-cells .preview-workspace.is-focused::before { background: var(--ws-ind); }
+
 .theme-preview .preview-underline { display: none; }
 
 .theme-preview.preview-ws-under .preview-underline {

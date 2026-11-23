@@ -149,6 +149,15 @@ struct PopupBlockView: View {
     /// Whether the block shows its hover: only where it tracks hover, not in a default layout.
     private var hovered: Bool { pointerInside && context.tracksHover }
 
+    /// The text color while the block shows its hover. A tinted app icon fills with its own color, which
+    /// `foregroundStyle` doesn't reach.
+    private var hoveredForeground: Color? {
+        guard hovered else { return nil }
+        var hovering = context.states
+        hovering.hover = true
+        return resolvedStyle(states: hovering).text.foreground?.color
+    }
+
     @ViewBuilder
     var body: some View {
         if block.isHidden(fields: fields, values: context.values) {
@@ -527,6 +536,7 @@ struct PopupBlockView: View {
         case .appIcon:
             if let icon = context.appIcon {
                 Image(nsImage: icon).resizable().frame(width: appearance.iconSize, height: appearance.iconSize)
+                    .styledAppIcon(appearance.appIcons, color: hoveredForeground ?? appearance.foreground)
             }
         case .appUpdate:
             if let update = context.update, let version = update.version {

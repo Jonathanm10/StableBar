@@ -1,0 +1,14 @@
+{
+  "$schema": "../scene.schema.json",
+  "configuration": {
+    "bar": { "background": "#ffffff", "textFollowsBackground": true, "glass": { "enabled": true, "transparency": 1 } },
+    "defaults": { "background": null },
+    "widgets": [
+      { "id": "plain", "type": "text", "text": "On the bar", "position": "left" },
+      { "id": "date", "type": "clock", "format": "EEE d MMM", "position": "right" },
+      { "id": "time", "type": "clock", "format": "HH:mm", "position": "right" }
+    ]
+  },
+  "draw": "bar",
+  "width": 600
+}

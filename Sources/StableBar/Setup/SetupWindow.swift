@@ -4,14 +4,19 @@ import ServiceManagement
 import SwiftUI
 
 @MainActor
-final class SetupWindow: NSObject, NSWindowDelegate {
+final class SetupWindow {
     private var session: SetupSession?
     private let launchResume: ApplicationMoveLaunchResume
     private var tour: SetupTourPanel?
-    private var card: NSWindow?
-    private var arrangeBar: (() -> Void)?
-    private var customizeWidgets: (() -> Void)?
-    private var showProfile: ((String) -> Void)?
+    private var editBar: (() -> Void)?
+    private var reopened = false
+
+    /// The tour covers the whole screen, the macOS menu bar included, until the bar takes the menu bar's place; then the
+    /// bar shows over the tour. macOS's permission prompts, such as Automation's and Calendars', show over both: their
+    /// windows are at level 999, just under the screen saver's. The cover also stays over the bar itself, which rises
+    /// above the menu bar's reveal strip while the menu bar hides, so the bar shows only once its copy lands.
+    private static let coverLevel = NSWindow.Level(rawValue: NSWindow.Level.aboveMenuBarStrip.rawValue + 1)
+    private static let tourLevel = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue - 1)
 
     init(launchResume: ApplicationMoveLaunchResume = ApplicationMoveLaunchResume()) {
         self.launchResume = launchResume
@@ -24,22 +29,20 @@ final class SetupWindow: NSObject, NSWindowDelegate {
         return session
     }
 
-    func show(store: BarStore, arrangeBar: (() -> Void)? = nil, customizeWidgets: (() -> Void)? = nil,
-              showProfile: ((String) -> Void)? = nil) {
+    /// Shows setup; `reopened` when the person opened it from Settings, Help or the menu rather than at launch.
+    func show(store: BarStore, reopened: Bool, editBar: (() -> Void)? = nil) {
         NSApp.activate(ignoringOtherApps: true)
-        if let window = tour ?? card {
-            window.makeKeyAndOrderFront(nil)
+        if let tour {
+            tour.makeKeyAndOrderFront(nil)
             return
         }
-        self.arrangeBar = arrangeBar
-        self.customizeWidgets = customizeWidgets
-        self.showProfile = showProfile
+        self.editBar = editBar
+        self.reopened = reopened
         store.barEditing.setupIsOpen = true
-        let resuming = launchResume.pendingKind == .setup
-        _ = prepareSession(store: store)
+        store.widgetScripts.setupOutputs = [DataSourceType.calendar.name: SetupSession.sampleMeeting()]
+        store.barEditing.setupAppMenus = prepareSession(store: store).sampleAppMenus
         store.appMenu.hidesAccessWarning = true
-        showTour(intro: !resuming && SetupProgress.playsIntro(in: .standard,
-            reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion))
+        showTour()
     }
 
     /// The height the Dock takes at the bottom of a screen, 0 when it sits on a side or another screen.
@@ -47,10 +50,10 @@ final class SetupWindow: NSObject, NSWindowDelegate {
         max(0, visibleFrame.minY - frame.minY)
     }
 
-    private func showTour(intro: Bool) {
+    private func showTour() {
         let screen = NSScreen.main!
         // macOS hides the Dock only while StableBar is the active app. It shows over the tour whenever
-        // another app is, such as System Settings after Allow…, so the tour keeps its buttons above it.
+        // another app is, such as System Settings after Allow, so the tour keeps its buttons above it.
         // Measured before the Dock hides.
         let dock = Self.dockHeight(frame: screen.frame, visibleFrame: screen.visibleFrame)
         let panel = SetupTourPanel(contentRect: screen.frame, styleMask: [.borderless], backing: .buffered, defer: false)
@@ -61,8 +64,7 @@ final class SetupWindow: NSObject, NSWindowDelegate {
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.animationBehavior = .none
-        panel.appearance = NSAppearance(named: .darkAqua)
-        panel.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + (intro ? 1 : -1))
+        panel.level = session!.step == .done ? Self.tourLevel : Self.coverLevel
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenNone]
         let display = BarDisplay(screen: screen)
         // The screen as it is now, found by its display number rather than its place among the screens, which can
@@ -70,14 +72,13 @@ final class SetupWindow: NSObject, NSWindowDelegate {
         let key = NSDeviceDescriptionKey("NSScreenNumber")
         let number = screen.deviceDescription[key] as? NSNumber
         let menuBarHeight = { (NSScreen.screens.first { $0.deviceDescription[key] as? NSNumber == number } ?? screen).menuBarHeight }
-        let host = NSHostingView(rootView: SetupTourView(session: session!, display: display,
-                                                         menuBarHeight: menuBarHeight, dock: dock, intro: intro,
-                                                         finish: { [weak self] in self?.showCard() },
-                                                         skip: { [weak self] in self?.closeTour() },
-                                                         reveal: { [weak panel] in panel?.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue - 1) },
+        let host = NSHostingView(rootView: SetupTourView(session: session!, display: display, menuBarHeight: menuBarHeight, dock: dock,
+                                                         backdrop: SetupBackdrop(), wallpaper: NSWorkspace.shared.readableDesktopImageURL(for: screen),
+                                                         close: { [weak self] in self?.closeTour() },
+                                                         cover: { [weak panel] in panel?.level = Self.coverLevel },
+                                                         reveal: { [weak panel] in panel?.level = Self.tourLevel },
                                                          lower: { [weak panel] in panel?.level = .normal },
-                                                         showProfile: showProfile,
-                                                         watchIntro: { [weak self] in self?.watchIntro() }))
+                                                         editBar: editBar, reopened: reopened))
         host.sizingOptions = []
         panel.contentView = host
         panel.alphaValue = 0
@@ -90,14 +91,6 @@ final class SetupWindow: NSObject, NSWindowDelegate {
         }
     }
 
-    /// Plays the intro again in a new tour over the same session, so the choices made so far stay.
-    private func watchIntro() {
-        guard let previous = tour else { return }
-        tour = nil
-        previous.close()
-        showTour(intro: true)
-    }
-
     private func closeTour() {
         guard let tour else { return }
         self.tour = nil
@@ -108,42 +101,12 @@ final class SetupWindow: NSObject, NSWindowDelegate {
         } completionHandler: {
             Task { @MainActor in tour.close() }
         }
-        if card == nil { end() }
-    }
-
-    private func showCard() {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 640),
-                              styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
-        window.title = "Set up StableBar"
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
-        window.isMovableByWindowBackground = true
-        window.appearance = NSAppearance(named: .darkAqua)
-        window.animationBehavior = SetupMotion(reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion).cardAnimationBehavior
-        window.isReleasedWhenClosed = false
-        window.delegate = self
-        window.standardWindowButton(.miniaturizeButton)?.isHidden = true
-        window.standardWindowButton(.zoomButton)?.isHidden = true
-        window.contentView = NSHostingView(rootView: SetupCardView(
-            session: session!, arrangeBar: arrangeBar, customizeWidgets: customizeWidgets,
-            close: { [weak window] in window?.close() },
-            motionChanged: { [weak window] in window?.animationBehavior = $0.cardAnimationBehavior }))
-        window.center()
-        card = window
-        window.makeKeyAndOrderFront(nil)
-        closeTour()
-    }
-
-    func windowWillClose(_ notification: Notification) {
-        card?.contentView = nil
-        card = nil
-        if tour == nil { end() }
-    }
-
-    private func end() {
         if session?.finished == false { session?.cancel() }
         session?.store.appMenu.hidesAccessWarning = false
         session?.store.barEditing.setupIsOpen = false
+        session?.store.barEditing.setupCoversDisplay = nil
+        session?.store.barEditing.setupAppMenus = []
+        session?.store.widgetScripts.setupOutputs = [:]
         session = nil
     }
 }
@@ -166,8 +129,6 @@ struct SetupSystem {
     var isTrusted: () -> Bool = { AXIsProcessTrusted() }
     var calendarAccess: () -> EKAuthorizationStatus = { EKEventStore.authorizationStatus(for: .event) }
     var hasBattery: () -> Bool = { PowerMonitor.hasInternalBattery() }
-    /// A notch as the bar sees one, so setup offers Notch exactly where the bar leaves a notch gap.
-    var hasNotchedDisplay: () -> Bool = { NSScreen.screens.map(BarDisplay.init).contains { $0.notch != nil } }
     /// Whether StableBar runs from an Applications folder, the only place it can open at login from.
     var isInApplications: () -> Bool = { appIsInApplications() }
     var loginStatus: () -> SMAppService.Status = { SMAppService.mainApp.status }
@@ -184,11 +145,6 @@ struct SetupSystem {
     var windowManagerRuns: () -> Bool = {
         WorkspaceSource.windowManagers.contains(where: \.isRunning)
     }
-    /// Scenes and tests replace the read-only check so drawing setup never contacts a window manager.
-    var checkWorkspaces: @Sendable (WorkspaceSource, URL) async -> SetupWorkspaceResult = { source, configuration in
-        await SetupWorkspaceChecker(configurationURL: configuration).check(source)
-    }
-    var yabaiSignalScript: String?
     /// The packages the sources suggest for the tools and apps on this Mac. Scenes replace it so drawing setup never
     /// downloads the Store's index.
     var suggestedPackages: @Sendable (PackageStoreClient) async -> [PackageIndex.Entry] = { client in
@@ -196,11 +152,17 @@ struct SetupSystem {
         let ids = catalog.suggestedIDs
         return catalog.widgets.filter { ids.contains($0.id) }
     }
+    /// The Store's widgets presets can add on this Mac, or nil when the Store can't be reached. Scenes replace it so
+    /// drawing setup never downloads the Store's index.
+    var storePackages: @Sendable (PackageStoreClient) async -> [PackageIndex.Entry]? = { client in
+        let catalog = await client.catalog()
+        return catalog.errors[PackageSource.storeID] == nil ? catalog.storeWidgets(suggested: catalog.suggestedIDs) : nil
+    }
 }
 
 /// A macOS permission the bar that setup builds depends on. Setup asks for each one it needs before it finishes.
 enum SetupPermission: CaseIterable, Hashable {
-    case accessibility, automation, calendars
+    case accessibility, calendars
 
     enum Action {
         case allow, openSettings
@@ -223,7 +185,6 @@ enum SetupPermission: CaseIterable, Hashable {
     func title(on macOSVersion: MacOSVersion) -> String {
         switch self {
         case .accessibility: macOSVersion.accessibilityName
-        case .automation: "Automation"
         case .calendars: "Calendars"
         }
     }
@@ -236,19 +197,28 @@ final class SetupSession {
     private let clearanceHold: ClearanceHold
     let themes: [ThemeChoice]
     let workspaceSource: WorkspaceSource
-    /// Only setup recommends clearance without a manager, and only when no configuration layer sets it.
+    /// Setup keeps windows clear when no manager runs and no configuration layer sets it.
     private let recommendsWindowClearance: Bool
-    var keepsWindowsClear: Bool {
-        preferences.keepWindowsClear ?? (base?.bar.keepWindowsClear == true || recommendsWindowClearance)
-    }
-    let workspaceConnection: SetupWorkspaceConnection
     /// Whether this Mac has an internal battery, which presets add Battery for.
     let hasBattery: Bool
-    /// Whether a connected display has a notch, refreshed when the screens change while setup shows.
-    private(set) var hasNotchedDisplay: Bool
     let currentThemeKey: String
     let applicationMove: ApplicationMoveController
-    var step = 0
+    /// StableBar reopened from Applications after setup moved it there.
+    let movedToApplications: Bool
+    /// The app in front when setup opened, with sample menus, which App menus show on the stage and on the bar until they
+    /// can read the app's own.
+    let sampleAppMenus: [String]
+    /// The meeting that Meetings shows on the stage and on the bar while setup is open, so it shows without reading the
+    /// calendar or asking for Calendars access.
+    static func sampleMeeting() -> ScriptOutput {
+        let start = Date.now.addingTimeInterval(12 * 60)
+        return ScriptOutput(text: "Design review", icon: "calendar", fields: [
+            "access": "granted", "phase": "soon", "title": "Design review", "minutes": "12",
+            "start": start.formatted(date: .omitted, time: .shortened),
+            "end": start.addingTimeInterval(60 * 60).formatted(date: .omitted, time: .shortened)
+        ])
+    }
+    var step = Step.intro
     private(set) var finished = false
     var preset: SetupPreferences.Preset?
     var preferences = SetupPreferences() { didSet { preview() } }
@@ -257,39 +227,43 @@ final class SetupSession {
     private(set) var suggestions: [PackageIndex.Entry] = []
     /// The key of the suggestion downloading for review.
     private(set) var downloading: String?
-    /// A picked suggestion's download, which setup shows for review before adding it, as Add here does.
-    var review: (inspection: WidgetPackageInspection, sourceID: String)?
+    /// A picked suggestion's download, or a preset's Store widget's, which setup shows for review before adding it, as
+    /// Add here does.
+    private(set) var review: (inspection: WidgetPackageInspection, sourceID: String, settings: [String: ConfigurationValue]?)?
+    /// The Store widgets presets can add on this Mac; nil until the Store answers, and when it can't be reached.
+    private(set) var storeEntries: [PackageIndex.Entry]?
+    /// The Store couldn't be reached, so presets add only their built-in widgets.
+    private(set) var storeUnreachable = false
+    /// Each theme's look, by its key, for Make it yours' tiles; empty until they're read.
+    private(set) var themePreviews: [String: ThemePreview] = [:]
+    /// The ID of the chosen preset's Store widget under review; nil for a suggestion from Found on your Mac.
+    private var reviewedStoreWidget: String?
     /// The person's Open at login choice; nil until they make one.
     var openAtLogin: Bool?
     var loginStatus: SMAppService.Status
     /// Whether StableBar opened at login when setup opened, to tell a change made in System Settings meanwhile.
     private let opensAtLoginAtStart: Bool
-    /// Setup turns on Open at login when it makes the bar replace the menu bar: macOS then keeps the menu bar hidden
-    /// even while StableBar isn't running, so without it nothing would sit on the top edge after the next login.
-    var recommendsOpenAtLogin: Bool { placementChoice == .top && system.isInApplications() }
-    /// Whether StableBar opens at login once setup finishes, as its switch shows it.
+    /// Whether StableBar opens at login once setup finishes, as its switch shows it. Setup turns it on: in the menu
+    /// bar's place, macOS keeps the menu bar hidden even while StableBar isn't running.
     var opensAtLogin: Bool {
         let enabled = loginStatus == .enabled || loginStatus == .requiresApproval
         return openAtLogin ?? (enabled || recommendationApplies(enabled: enabled))
     }
 
-    /// The recommendation applies while the login status is still the one setup opened with, so a change made in
-    /// System Settings meanwhile wins over it.
+    /// The recommendation applies in an Applications folder, while the login status is still the one setup opened with,
+    /// so a change made in System Settings meanwhile wins over it.
     private func recommendationApplies(enabled: Bool) -> Bool {
-        recommendsOpenAtLogin && enabled == opensAtLoginAtStart
+        system.isInApplications() && enabled == opensAtLoginAtStart
     }
     var calendarAccess: EKAuthorizationStatus
     var menuBarHides: Bool
     private let menuBarHidAtStart: Bool
     private let stableBarHidMenuBarAtStart: Bool
     var accessibilityAccess: Bool
-    /// StableBar's access to System Events, which hides and shows the menu bar; nil until setup checks it.
-    private(set) var automationAccess: MenuBarAutoHide.Access?
     private var placing = SetupPlacement()
-    /// The placement the person picked, in the intro or on the first step; nil until they pick one, whatever the bar's
-    /// placement is.
+    /// The placement Allow chose; nil until then.
     var placementChoice: SetupPreferences.Placement? { placing.choice }
-    /// The placement that needs Automation access first; setup applies it once access is allowed.
+    /// The placement that waits for Automation access, while the bar sits below the menu bar.
     var placementAwaitingAccess: SetupPreferences.Placement? { placing.awaitingAccess }
     private var accessRequest: Task<MenuBarAutoHide.Access, Never>?
     @ObservationIgnored let system: SetupSystem
@@ -300,8 +274,14 @@ final class SetupSession {
     var error: String?
     private(set) var base: Configuration?
     private let sessionEdits: [ConfigurationEdit]
-    /// Later command-line edits append after the preview; the handoff keeps them without duplicating its choices.
-    private var previewEditCount = 0
+    /// The session edits of setup's last preview.
+    private var previewEdits: [ConfigurationEdit] = []
+    /// Command-line edits made since the last preview, which the next preview and the handoff keep without duplicating
+    /// its choices. A reset or `--persist` clears the preview along with the edits before them.
+    private var laterEdits: ArraySlice<ConfigurationEdit> {
+        let current = store.configurationStore.sessionEdits
+        return current.starts(with: previewEdits) ? current.dropFirst(previewEdits.count) : current[...]
+    }
     /// The choices setup opened with, to tell whether skipping would lose any.
     @ObservationIgnored private var initialPreferences = SetupPreferences()
 
@@ -310,10 +290,8 @@ final class SetupSession {
         self.store = store
         clearanceHold = ClearanceHold(configuration: store.configurationStore.clearanceConfiguration)
         self.system = system
-        let check = system.checkWorkspaces
-        let configuration = store.configurationStore.configurationURL
-        workspaceConnection = SetupWorkspaceConnection { await check($0, configuration) }
         self.applicationMove = applicationMove ?? ApplicationMoveController(error: resume?.failure)
+        movedToApplications = resume?.setup != nil && system.isInApplications()
         let loginStatus = system.loginStatus()
         self.loginStatus = loginStatus
         opensAtLoginAtStart = resume?.setup?.opensAtLoginAtStart ?? (loginStatus == .enabled || loginStatus == .requiresApproval)
@@ -324,7 +302,7 @@ final class SetupSession {
         stableBarHidMenuBarAtStart = resume?.setup?.stableBarHidMenuBarAtStart ?? MenuBarAutoHide.turnedOnByStableBar(in: system.defaults)
         accessibilityAccess = system.isTrusted()
         hasBattery = system.hasBattery()
-        hasNotchedDisplay = system.hasNotchedDisplay()
+        sampleAppMenus = store.appWatcher.activeApp?.localizedName.map { [$0, "File", "Edit", "View", "Window", "Help"] } ?? []
         currentThemeKey = store.configurationStore.selectedThemeKey
         themes = ThemeCatalog(packages: store.configurationStore.configurationURL.deletingLastPathComponent().appending(path: "packages"),
                               themesDirectory: store.configurationStore.themesDirectory, selectedKey: currentThemeKey).choices
@@ -332,59 +310,153 @@ final class SetupSession {
         // Until a setup finishes, Spaces on the first launch's starter stands in for a manager it didn't find, so setup
         // looks again.
         let document = try? JSONDecoder().decode([String: ConfigurationValue].self, from: Data(contentsOf: store.configurationStore.configurationURL))
-        let provisional = !system.defaults.bool(forKey: SetupProgress.completedKey) && document.map(SetupPreferences.isFirstLaunchSpacesStarter) == true
+        let completed = system.defaults.bool(forKey: SetupProgress.completedKey)
+        let provisional = !completed && document.map(SetupPreferences.isFirstLaunchSpacesStarter) == true
         workspaceSource = system.workspaceSource(provisional ? nil : store.namedWorkspaceSource)
         let bar = try? store.effectiveDocument["bar"]?.decoded([String: ConfigurationValue].self)
         recommendsWindowClearance = workspaceSource == .spaces && !system.windowManagerRuns() && bar?["keepWindowsClear"] == nil
         sessionEdits = resume.map { $0.edits.map(\.restored) } ?? store.configurationStore.sessionEdits
-        previewEditCount = sessionEdits.count
+        previewEdits = sessionEdits
         // Restoring preferences can preview them immediately, so clearance must already be held.
         store.windowClearance.hold = clearanceHold
+        // Setup builds the bar for the menu bar's place from the start, so the bar on the stage is the one that flies
+        // there.
+        preferences.placement = .top
         preferences.workspaces = workspaceSource
+        // A new configuration starts from Everyday; any other keeps its widgets until a preset is picked.
+        if resume == nil, !completed, document.map(SetupPreferences.isFirstLaunchStarter) == true {
+            preset = .everyday
+            preferences = preferences.replacingPresetChoices(with: choices(for: .everyday, placement: preferences.placement))
+        }
         initialPreferences = preferences
         if let saved = resume?.setup {
-            step = saved.step
+            step = Step(rawValue: saved.step)!
             preset = saved.preset
             placing = SetupPlacement(choice: saved.placementChoice, awaitingAccess: saved.placementAwaitingAccess)
             openAtLogin = system.isInApplications() ? saved.openAtLogin : nil
             preferences = saved.preferences
         }
         preview()
+        // Automation allowed or auto-hide turned off while StableBar moved itself applies now: the relaunched app can
+        // become active before the tour watches for it.
+        if resume?.setup != nil { refreshPlacement() }
     }
 
-    /// Moving is for Open at login, but registering it still waits for Finish setup, just like the switch.
+    /// Moving is for Open at login, but registering it still waits for Done, just like the switch.
     func resumeAfterMoving() -> ApplicationMoveResume {
         ApplicationMoveResume(kind: .setup, configuration: store.configurationStore.sharedConfigurationURL.standardizedFileURL,
             barConfiguration: store.configurationStore.configurationURL.standardizedFileURL,
-            setup: .init(step: step, preferences: preferences, preset: preset, openAtLogin: true,
+            setup: .init(step: step.rawValue, preferences: preferences, preset: preset, openAtLogin: true,
                          placementChoice: placementChoice, placementAwaitingAccess: placementAwaitingAccess,
                          menuBarHidAtStart: menuBarHidAtStart, stableBarHidMenuBarAtStart: stableBarHidMenuBarAtStart,
                          opensAtLoginAtStart: opensAtLoginAtStart),
-            edits: (sessionEdits + store.configurationStore.sessionEdits.dropFirst(previewEditCount)).map(ApplicationMoveResume.Edit.init))
+            edits: (sessionEdits + laterEdits).map(ApplicationMoveResume.Edit.init))
     }
 
-    /// Chooses `preset`, as its tile does, or the current bar again when it's the chosen one. On a Mac without an
-    /// internal battery, the preset leaves Battery out.
+    /// Chooses `preset`, as its row does, or the current bar again when it's the chosen one. Its Store widgets wait for
+    /// their review.
     func toggle(_ preset: SetupPreferences.Preset) {
         let selected = self.preset == preset
         self.preset = selected ? nil : preset
-        let choices = selected ? SetupPreferences()
-            : preset.preferences(workspaces: workspaceSource, placement: preferences.placement, hasBattery: hasBattery)
-        preferences = preferences.replacingPresetChoices(with: choices)
+        preferences = preferences.replacingPresetChoices(with: selected ? SetupPreferences() : choices(for: preset, placement: preferences.placement))
     }
 
-    /// The widget sets `preset`'s tile shows, for where the bar sits and for this Mac.
-    func shownWidgetSets(_ preset: SetupPreferences.Preset) -> [SetupPreferences.WidgetSet] {
-        preset.shownWidgetSets(workspaces: workspaceSource, placement: presetPlacement, hasBattery: hasBattery)
+    /// What `preset` adds where the bar sits on this Mac: without Battery on a Mac without one, and, once the Store has
+    /// answered, with only the Store widgets it lists for it.
+    private func choices(for preset: SetupPreferences.Preset, placement: SetupPreferences.Placement) -> SetupPreferences {
+        var choices = preset.preferences(workspaces: workspaceSource, placement: placement, hasBattery: hasBattery)
+        // A Store widget already approved or on the bar keeps its place, even when the Store can't be reached.
+        choices.widgetSets.removeAll { set in
+            guard case let .store(id, _, _, _) = set, !keepsStoreWidget(id) else { return false }
+            return storeUnreachable || storeEntries.map { !$0.contains { $0.id == id } } == true
+        }
+        return choices
     }
 
-    var offeredPresets: [SetupPreferences.Preset] {
-        SetupPreferences.Preset.offered(on: placement, hasNotchedDisplay: hasNotchedDisplay, keeping: preset)
+    private func keepsStoreWidget(_ id: String) -> Bool {
+        preferences.storeWidgets.contains { $0.id == id } || store.configuration?.widgets.contains { $0.id == id } == true
     }
 
-    /// A display change updates the tiles without clearing a chosen preset, which stays available to deselect.
-    func refreshDisplays() {
-        hasNotchedDisplay = system.hasNotchedDisplay()
+    /// The widget sets `preset` gives the bar, as its row draws them: the chosen preset's without those its review left out.
+    func widgetSets(_ preset: SetupPreferences.Preset) -> [SetupPreferences.WidgetSet] {
+        self.preset == preset ? preferences.widgetSets : choices(for: preset, placement: preferences.placement).widgetSets
+    }
+
+    /// `preset`'s widgets for a row to draw in a theme, which fills in its tokens, a Store widget as its symbol in the
+    /// Store.
+    func sampleWidgets(_ preset: SetupPreferences.Preset) -> [[String: ConfigurationValue]] {
+        widgetSets(preset).flatMap { set -> [[String: ConfigurationValue]] in
+            guard case let .store(id, _, position, _) = set else { return set.widgets }
+            return [["id": .string(id), "type": .string("text"), "text": .string(""), "position": .string(position.rawValue),
+                     "icon": .string(storeEntries?.first { $0.id == id }?.symbol ?? "shippingbox")]]
+        }
+    }
+
+    /// The Store widgets `preset` leaves out because the Store can't be reached.
+    func leftOut(_ preset: SetupPreferences.Preset) -> [String] {
+        guard storeUnreachable else { return [] }
+        return preset.preferences(workspaces: workspaceSource, placement: preferences.placement).widgetSets.compactMap { set in
+            if case let .store(id, name, _, _) = set, !keepsStoreWidget(id) { name } else { nil }
+        }
+    }
+
+    /// Asks the Store once which widgets presets can add here. The chosen preset then keeps only those.
+    func loadStoreWidgets() async {
+        guard storeEntries == nil, !storeUnreachable else { return }
+        if let entries = await system.storePackages(store.packageStoreClient) { storeEntries = entries } else { storeUnreachable = true }
+        guard !finished, let preset else { return }
+        let sets = choices(for: preset, placement: preferences.placement).widgetSets
+        if sets != preferences.widgetSets { preferences.widgetSets = sets }
+    }
+
+    /// Reads each theme's look for Make it yours' tiles, off the main thread.
+    func loadThemePreviews() async {
+        let choices = themes
+        let directory = store.configurationStore.themesDirectory
+        themePreviews = await Task.detached {
+            Dictionary(uniqueKeysWithValues: choices.compactMap { choice in
+                (try? ThemePreview(choice: choice, themesDirectory: directory)).map { (choice.key, $0) }
+            })
+        }.value
+    }
+
+    /// The chosen preset's Store widgets that Add still reviews, with the settings each starts from. One whose ID a widget
+    /// on the bar already has, from the Store or not, or picked under Found on your Mac, needs no review.
+    var storeWidgetsToAdd: [(entry: PackageIndex.Entry, settings: [String: String])] {
+        preferences.widgetSets.compactMap { set in
+            guard case let .store(id, _, _, settings) = set, store.configuration?.widgets.contains(where: { $0.id == id }) != true,
+                  !(preferences.packages + preferences.storeWidgets).contains(where: { $0.id == id }),
+                  let entry = storeEntries?.first(where: { $0.id == id }) else { return nil }
+            return (entry, settings)
+        }
+    }
+
+    /// Shows the review of one of the chosen preset's Store widgets, as Found on your Mac does.
+    func review(_ widget: (entry: PackageIndex.Entry, settings: [String: String])) async {
+        guard downloading == nil, !finished else { return }
+        downloading = widget.entry.key
+        defer { downloading = nil }
+        do {
+            let inspection = try await store.packageStoreClient.packageForAdding(widget.entry)
+            // Its Add is on Allow, and another preset may not have this widget, so a review that comes back after
+            // leaving Allow, or once the bar is saved, would add nothing, or a widget the chosen preset doesn't have.
+            guard step == .allow, storeWidgetsToAdd.contains(where: { $0.entry.id == widget.entry.id }) else { return }
+            // Settings saved for the package earlier win over the preset's.
+            let saved = try WidgetSetup(store: store).savedSettings(for: inspection.manifest)
+            reviewedStoreWidget = widget.entry.id
+            review = (inspection, widget.entry.sourceID, widget.settings.mapValues(ConfigurationValue.string).merging(saved) { $1 })
+            error = nil
+        } catch {
+            // A failed download is Allow's error only while Allow still offers the widget.
+            guard step == .allow, storeWidgetsToAdd.contains(where: { $0.entry.id == widget.entry.id }) else { return }
+            self.error = errorMessage(error)
+        }
+    }
+
+    /// Closes the review, once Add has added its package or with Back, which leaves the widget off the bar.
+    func endReview() {
+        review = nil
+        reviewedStoreWidget = nil
     }
 
     func loadSuggestions() async {
@@ -402,85 +474,36 @@ final class SetupSession {
         downloading = entry.key
         defer { downloading = nil }
         do {
-            review = (try await store.packageStoreClient.packageForAdding(entry), entry.sourceID)
+            let inspection = try await store.packageStoreClient.packageForAdding(entry)
+            // The bar is saved once setup finishes, so a review that comes back then would add nothing.
+            guard !finished else { return }
+            review = (inspection, entry.sourceID, nil)
             error = nil
         } catch {
+            guard !finished else { return }
             self.error = errorMessage(error)
         }
     }
 
-    /// Adds a suggestion its review installed, with the settings the review chose. Finish setup saves it.
+    /// Adds a suggestion, or the preset's Store widget, that its review installed, with the settings the review chose.
+    /// Done saves it.
     func add(_ inspection: WidgetPackageInspection, settings: [String: ConfigurationValue]) {
-        preferences.packages.append(.init(id: inspection.manifest.id, version: inspection.manifest.version, settings: settings))
-    }
-
-    /// The source the previewed bar's Workspaces uses; nil while it shows no Workspaces. The preview has the
-    /// starter's widgets as well as the preset's.
-    private var previewedWorkspaceSource: WorkspaceSource? {
-        guard let configuration = store.configuration,
-              configuration.widgets.contains(where: { $0.enabled && $0.content == .workspaces }) else { return nil }
-        return configuration.workspaceSource
-    }
-
-    /// The workspace source the finishing step's advice is about: the previewed Workspaces' source, or, on a bar
-    /// without Workspaces, the manager setup detected.
-    var adviceSource: WorkspaceSource { previewedWorkspaceSource ?? workspaceSource }
-
-    /// No connection check for a manager detected on a bar without Workspaces, or for sources needing no setup.
-    var workspaceCheckSource: WorkspaceSource? {
-        guard let source = previewedWorkspaceSource, source == .yabai || source == .omniwm else { return nil }
-        return source
-    }
-
-    var yabaiSignalScript: String {
-        if let script = system.yabaiSignalScript { return script }
-        guard system.isInApplications(), let executable = Bundle.main.executableURL?.path else {
-            // A DMG or translocated app path won't survive installation or a reboot.
-            return YabaiSetupSignals.script()
-        }
-        return YabaiSetupSignals.script(executable: executable)
+        let package = SetupPreferences.Package(id: inspection.manifest.id, version: inspection.manifest.version, settings: settings)
+        if reviewedStoreWidget == package.id { preferences.storeWidgets.append(package) } else { preferences.packages.append(package) }
     }
 
     /// Whether the bar setup builds shows macOS Spaces in Workspaces, whose desktops switch through the Switch to
     /// Desktop shortcuts.
     var showsSpacesGuidance: Bool { store.configuration?.usesSpacesWorkspaces == true }
 
-    /// The offset earlier setups wrote for Below menu bar, before `bar.belowMenuBar`.
-    private var earlierBelowMenuBarOffset: Double {
-        max(NSStatusBar.system.thickness, NSScreen.main?.safeAreaInsets.top ?? 0)
-    }
-
     var needsCalendarSetup: Bool {
         preferences.widgetSets.contains(.meetings) && calendarAccess != .fullAccess
     }
 
-    var currentTheme: String {
-        themes.first { $0.key == currentThemeKey }?.title ?? currentThemeKey
-    }
-
-    /// The placement setup shows as chosen. Earlier setups wrote the menu bar's height as the offset for
-    /// Below menu bar, so that offset still counts as below the menu bar.
-    var placement: SetupPreferences.Placement {
-        if preferences.placement != .current { return preferences.placement }
-        guard let bar = base?.bar else { return .current }
-        if bar.position == .bottom { return bar.offset == 0 ? .bottom : .current }
-        if bar.belowMenuBar { return bar.offset == 0 ? .belowMenuBar : .current }
-        return bar.offset == 0 ? .top : bar.offset == earlierBelowMenuBarOffset ? .belowMenuBar : .current
-    }
-
-    /// The placement presets apply for, and their tiles show: the chosen placement, or the one setup shows for the bar,
-    /// which counts `bar.belowMenuBar` and an earlier setup's offset as below the menu bar.
-    var presetPlacement: SetupPreferences.Placement {
-        if preferences.placement != .current { return preferences.placement }
-        return placement == .belowMenuBar || base?.bar.belowMenuBar == true ? .belowMenuBar : .current
-    }
-
-    /// What setup previews and saves: the choices, without Menu bar items while presets apply below the menu bar, which
-    /// the edits can't tell from an earlier setup's offset. The choices themselves keep them for a move to the top edge.
+    /// What setup previews and saves: the choices, with window clearance when setup recommends it.
     private var applied: SetupPreferences {
         var applied = preferences
-        if applied.keepWindowsClear == nil && recommendsWindowClearance { applied.keepWindowsClear = true }
-        if presetPlacement == .belowMenuBar { applied.widgetSets.removeAll { $0 == .menuBarItems } }
+        if recommendsWindowClearance { applied.keepWindowsClear = true }
         return applied
     }
 
@@ -488,55 +511,34 @@ final class SetupSession {
         store.registry.permissions(for: store.configuration).contains(.calendars) || needsCalendarSetup && !preferences.deferMeetings
     }
 
-    /// Whether the chosen placement means setup changes macOS's menu bar setting, or already did.
-    var needsAutomation: Bool {
-        if placementAwaitingAccess != nil || menuBarHides != menuBarHidAtStart { return true }
-        return placementChangesMenuBar
-    }
+    /// Setup's steps in order: the intro, the bar's widgets and look, after which the bar takes its place, what macOS
+    /// must still allow, and the end.
+    enum Step: Int, CaseIterable { case intro, choose, allow, done }
 
-    /// The placement needs the menu bar hidden or shown, and it isn't yet.
-    private var placementChangesMenuBar: Bool {
-        switch placement {
-        case .top: !menuBarHides
-        case .belowMenuBar, .bottom: menuBarHides
+    /// How the bar's move to the menu bar's place stands, which Automation's row shows.
+    var placementPhase: SetupPlacement.Phase { placing.phase }
+    /// Automation is being checked or the macOS menu bar is changing, so where the bar goes isn't settled yet.
+    var placementSettling: Bool {
+        switch placing.phase {
+        case .checkingAccess, .changingMenuBar: true
         default: false
         }
     }
 
-    /// Whether choosing to replace the menu bar has taken effect: the bar goes on the top edge and the macOS menu bar
-    /// hides, whether setup hid it or it already was.
-    var replacesMenuBar: Bool {
-        preferences.placement == .top && menuBarHides && placementAwaitingAccess == nil
+    /// Whether setup can finish: macOS answered for Automation, or the menu bar didn't need to change, and Accessibility
+    /// is allowed.
+    var readyToLand: Bool {
+        guard accessibilityAccess else { return false }
+        return switch placing.phase {
+        case .placed, .awaitingAccess, .failed: true
+        default: false
+        }
     }
 
-    /// Setup's steps, in the order the tour shows them. Where the bar sits comes first, since the presets and what
-    /// the bar needs depend on it, and the permissions come after the choices that decide them.
-    enum Step: Int, CaseIterable { case placement, look, touches, permissions, tryIt }
-
-    /// Whether Continue waits at `step`: on the first step, which shows none picked, until a choice takes effect, so
-    /// nobody moves on with a placement they didn't choose, and for missing permissions from the permissions step on.
-    func blocksContinue(at step: Step) -> Bool {
-        (step == .placement && !placementTookEffect) || waitsForPermissions(at: step)
-    }
-
-    /// Whether the choice on the first step has taken effect: the bar's placement is the one chosen and the macOS menu
-    /// bar hides or shows to match. It hasn't while macOS asks for Automation access, once it's refused, or while the
-    /// menu bar changes.
-    var placementTookEffect: Bool {
-        guard case .placed(let placement) = placing.phase else { return false }
-        return preferences.placement == placement && menuBarHides == (placement == .top)
-    }
-
-    /// Whether Continue, or Finish setup, waits at `step` for permissions macOS hasn't allowed yet: from the step that
-    /// asks for them on.
-    func waitsForPermissions(at step: Step) -> Bool {
-        step.rawValue >= Step.permissions.rawValue && !missingPermissions.isEmpty
-    }
-
-    /// What macOS must allow for the bar setup builds, in the order setup asks. Accessibility is always on the list:
-    /// the app menus, the Apple menu, Menu bar items, Workspaces and window clearance all depend on it.
+    /// What macOS must allow for the bar setup builds. Accessibility is always on the list: the app menus, the Apple
+    /// menu, Menu bar items, Workspaces and window clearance all depend on it.
     var neededPermissions: [SetupPermission] {
-        [.accessibility] + (needsAutomation ? [.automation] : []) + (needsCalendarAccess ? [.calendars] : [])
+        [.accessibility] + (needsCalendarAccess ? [.calendars] : [])
     }
 
     /// Setup doesn't finish while any of these is missing.
@@ -547,17 +549,7 @@ final class SetupSession {
     func isAllowed(_ permission: SetupPermission) -> Bool {
         switch permission {
         case .accessibility: accessibilityAccess
-        case .automation: automationAccess == .allowed && placementAwaitingAccess == nil && !placementChangesMenuBar
         case .calendars: calendarAccess == .fullAccess
-        }
-    }
-
-    /// Asks for Automation access and applies the placement that was waiting for it.
-    func allowAutomation() async {
-        if placementChangesMenuBar || placementAwaitingAccess != nil {
-            await place(placementAwaitingAccess ?? placement)
-        } else {
-            _ = await menuBarAccess()
         }
     }
 
@@ -572,15 +564,16 @@ final class SetupSession {
             base = store.configuration
             return
         }
-        var shown = applied
-        if needsCalendarSetup { shown.deferMeetings = true }
         do {
             var loader = ConfigurationLoader()
-            let base = try loader.load(store.configurationStore.configurationURL, context: store.configurationStore.context)
-            let document = try JSONDecoder().decode([String: ConfigurationValue].self, from: Data(contentsOf: store.configurationStore.configurationURL))
-            let edits = try sessionEdits + shown.edits(in: base, document: document)
-            try store.configurationStore.setSessionEdits(edits)
-            previewEditCount = edits.count
+            loader.themesDirectory = store.configurationStore.themesDirectory
+            let data = try Data(contentsOf: store.configurationStore.configurationURL)
+            let base = try applied.load(store.configurationStore.configurationURL, data: data, context: store.configurationStore.context, with: &loader)
+            let document = try JSONDecoder().decode([String: ConfigurationValue].self, from: data)
+            let edits = try sessionEdits + applied.edits(in: base, document: document, widgetPackageIDs: loader.widgetPackageIDs,
+                                                         tokens: loader.document["tokens"]?.decoded([String: ConfigurationValue].self))
+            try store.configurationStore.setSessionEdits(edits + laterEdits)
+            previewEdits = edits
             self.base = base
             error = nil
         } catch {
@@ -605,21 +598,30 @@ final class SetupSession {
         for effect in effects {
             switch effect {
             case .move(let placement):
-                preferences.placement = placement
+                var moved = preferences
+                moved.placement = placement
+                if let preset {
+                    // The preset's bar for the new placement, still without the Store widgets its review left out.
+                    moved.widgetSets = choices(for: preset, placement: placement).widgetSets.filter { set in
+                        if case .store = set { preferences.widgetSets.contains(set) } else { true }
+                    }
+                }
+                // Every write previews the bar again, which reloads the configuration while the bar's copy flies to its
+                // place.
+                if moved != preferences { preferences = moved }
             case .showError(let message):
                 error = message
             case .checkAccess(let request):
                 let access = await menuBarAccess()
                 await send(.accessChecked(access, request: request))
-            case .changeMenuBar(let hidden, let provesAccess, let request):
+            case .changeMenuBar(let hidden, let request):
                 var failure: String?
                 do {
                     try await setMenuBarHidden(hidden)
-                    if provesAccess { automationAccess = .allowed }
                 } catch {
                     failure = errorMessage(error)
                 }
-                await send(.menuBarChanged(failure: failure, request: request))
+                await send(.menuBarChanged(failure: failure, menuBarHides: menuBarHides, request: request))
             }
         }
     }
@@ -634,7 +636,6 @@ final class SetupSession {
             access = await request.value
             accessRequest = nil
         }
-        automationAccess = access
         return access
     }
 
@@ -644,6 +645,9 @@ final class SetupSession {
         let previous = menuBarChange
         let change = Task {
             _ = try? await previous?.value
+            // The setting may have changed outside setup since StableBar last read it. Auto-hide found off is no longer
+            // StableBar's to turn off, but auto-hide found on isn't StableBar's doing.
+            if system.menuBarHides() { menuBarHides = true } else { recordMenuBar(hides: false) }
             guard hidden != menuBarHides else { return }
             do {
                 try await system.setMenuBarHidden(hidden)
@@ -682,12 +686,22 @@ final class SetupSession {
         menuBarHides = system.menuBarHides()
         accessibilityAccess = system.isTrusted()
         guard !finished else { return }
-        if calendarAccess == .fullAccess { preferences.deferMeetings = false } else { preview() }
-        guard needsAutomation, accessRequest == nil else { return }
+        if calendarAccess == .fullAccess, preferences.deferMeetings {
+            preferences.deferMeetings = false
+        }
+        refreshPlacement()
+    }
+
+    /// Lets the placement follow the menu bar setting as last read, and Automation allowed in System Settings meanwhile,
+    /// which puts the bar in the menu bar's place after all.
+    private func refreshPlacement() {
+        let menuBarHides = menuBarHides
+        Task { await send(.menuBarRead(menuBarHides: menuBarHides)) }
+        guard placementAwaitingAccess != nil, accessRequest == nil else { return }
         Task {
-            let access = await system.automationAccess(false)
-            automationAccess = access
-            guard access == .allowed else { return }
+            // Once Done has saved the bar, its placement stays. A move to Applications hands over the placement still
+            // waiting, which the relaunched setup finishes.
+            guard await system.automationAccess(false) == .allowed, !finished, !applicationMove.isBusy else { return }
             await send(.accessAllowed(menuBarHides: menuBarHides))
         }
     }
@@ -700,21 +714,46 @@ final class SetupSession {
         preferences != initialPreferences || openAtLogin != nil || menuBarHides != menuBarHidAtStart || placementAwaitingAccess != nil
     }
 
+    /// Puts back the edits setup opened with and the command-line edits made since, each that still applies: not an edit
+    /// of a widget only setup's choices had, nor one adding a widget with the ID of one Done saved.
+    private func restoreSessionEdits() {
+        let edits = sessionEdits + laterEdits
+        if (try? store.configurationStore.setSessionEdits(edits)) == nil {
+            var kept: [ConfigurationEdit] = []
+            // The edits of a widget whose add is dropped would change the saved widget with its ID instead.
+            var dropped: Set<String> = []
+            for edit in edits {
+                if let id = edit.id, dropped.contains(id) { continue }
+                if (try? store.configurationStore.setSessionEdits(kept + [edit])) != nil {
+                    kept.append(edit)
+                } else if edit.action == .add, case let .string(id)? = edit.properties?["id"] {
+                    dropped.insert(id)
+                }
+            }
+            store.configurationStore.sessionEdits = kept
+        }
+        store.configurationStore.reloadConfiguration()
+    }
+
     func cancel() {
-        workspaceConnection.hide()
         // A placement still waiting on macOS, for Automation access or for its menu bar change, no longer applies, and
         // the restore below waits for that change.
         _ = placing.handle(.skipped)
+        // Nor does the chosen preset: the Store answering later leaves the bar as it was.
+        preset = nil
         system.defaults.set(true, forKey: SetupProgress.skippedKey)
-        store.configurationStore.sessionEdits = sessionEdits
-        store.configurationStore.reloadConfiguration()
+        restoreSessionEdits()
         releaseClearanceConfiguration()
         // Setup has closed by the time the restore could fail, so nothing shows the error. Settings → General shows
         // the menu bar setting as it is and changes it.
         Task { try? await setMenuBarHidden(menuBarHidAtStart) }
     }
 
+    /// Saves the bar, then registers Open at login. Once the bar is saved, it only tries Open at login again.
     func finish() {
+        guard !finished else { return registerOpenAtLogin() }
+        // A check or change still running would move the bar after it's saved.
+        guard !placementSettling else { return }
         calendarAccess = system.calendarAccess()
         accessibilityAccess = system.isTrusted()
         guard missingPermissions.isEmpty else {
@@ -724,28 +763,36 @@ final class SetupSession {
         var saved = false
         do {
             if needsCalendarSetup { preferences.deferMeetings = true }
-            try applied.save(to: store.configurationStore.configurationURL, context: store.configurationStore.context)
+            try applied.save(to: store.configurationStore.configurationURL, context: store.configurationStore.context,
+                             themesDirectory: store.configurationStore.themesDirectory)
             saved = true
-            store.configurationStore.sessionEdits = sessionEdits
-            store.configurationStore.reloadConfiguration()
+            restoreSessionEdits()
             if let error = store.configurationError { throw CommandFailure(message: error) }
-            // The file is saved and loads, so clearance follows it even if Open at login fails below.
+            // The file is saved and loads, so setup has finished even if Open at login fails below.
             releaseClearanceConfiguration()
+            system.defaults.set(true, forKey: SetupProgress.completedKey)
+            finished = true
+        } catch {
+            self.error = (saved ? "Your bar settings were saved. " : "") + errorMessage(error)
+            loginStatus = system.loginStatus()
+            return
+        }
+        registerOpenAtLogin()
+    }
+
+    private func registerOpenAtLogin() {
+        do {
             // A choice changes it, and so does the recommendation while it applies.
             let status = system.loginStatus()
             let enabled = status == .enabled || status == .requiresApproval
             if system.isInApplications(), let wanted = openAtLogin ?? (recommendationApplies(enabled: enabled) ? true : nil), wanted != enabled {
                 try system.setOpenAtLogin(wanted)
             }
-            loginStatus = system.loginStatus()
-            system.defaults.set(true, forKey: SetupProgress.completedKey)
             error = nil
-            finished = true
-            workspaceConnection.hide()
         } catch {
-            self.error = (saved ? "Your bar settings were saved. " : "") + errorMessage(error)
-            loginStatus = system.loginStatus()
+            self.error = "Your bar settings were saved. " + errorMessage(error)
         }
+        loginStatus = system.loginStatus()
     }
 
     private func releaseClearanceConfiguration() {
@@ -753,65 +800,6 @@ final class SetupSession {
         store.windowClearance.hold = nil
         // Saving can leave the displayed composition unchanged, so reloading alone may not update clearance.
         store.onConfigurationChange?()
-    }
-}
-
-struct SetupCardView: View {
-    let session: SetupSession
-    let arrangeBar: (() -> Void)?
-    let customizeWidgets: (() -> Void)?
-    let close: () -> Void
-    let motionChanged: (SetupMotion) -> Void
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        VStack(spacing: 18) {
-            Spacer()
-            Image(nsImage: StableBarIcon.image)
-                .resizable()
-                .frame(width: 96, height: 96)
-                .overlay(alignment: .bottomTrailing) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 28))
-                        .foregroundStyle(.white, SettingsPalette.success)
-                }
-            Text("You're all set").font(.system(size: 26, weight: .semibold))
-            Text("Click a widget to use it. Edit Bar in Place moves widgets and opens their settings. Changes save automatically, and Undo restores the previous step.")
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            if session.preferences.widgetSets.contains(.meetings) && session.preferences.deferMeetings {
-                Label("Meetings is turned off. Turn it on in Settings → Bar when you are ready to allow Calendar access.", systemImage: "calendar")
-                    .font(.callout).foregroundStyle(.secondary)
-            }
-            if session.loginStatus == .requiresApproval {
-                Text("Open at login still needs your approval in macOS.").font(.callout)
-                Button("Allow StableBar in Login Items…") { SMAppService.openSystemSettingsLoginItems() }
-            }
-            Spacer()
-            HStack(spacing: 10) {
-                if let arrangeBar {
-                    Button { close(); arrangeBar() } label: { Text("Edit Bar in Place").frame(maxWidth: .infinity) }
-                        .buttonStyle(SetupButtonStyle(prominent: false))
-                }
-                if let customizeWidgets {
-                    Button { close(); customizeWidgets() } label: { Text("Open Settings").frame(maxWidth: .infinity) }
-                        .buttonStyle(SetupButtonStyle(prominent: false))
-                }
-            }
-            Button { close() } label: { Text("Done").frame(maxWidth: .infinity) }
-                .buttonStyle(SetupButtonStyle())
-                .keyboardShortcut(.defaultAction)
-            Text("Reopen this guide with Getting Started… in the menu-bar icon's menu.")
-                .font(.caption).foregroundStyle(.secondary)
-        }
-        .padding(28)
-        .frame(width: 460, height: 640)
-        .background(SettingsPalette.background)
-        .onChange(of: reduceMotion, initial: true) { motionChanged(SetupMotion(reduceMotion: reduceMotion)) }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            session.refreshAccess()
-        }
     }
 }
 
@@ -823,12 +811,6 @@ enum SetupProgress {
 
     static func opensAtLaunch(in defaults: UserDefaults) -> Bool {
         !defaults.bool(forKey: completedKey) && !defaults.bool(forKey: skippedKey)
-    }
-
-    /// The intro plays on the first run, before setup was finished or skipped, unless Reduce Motion is on. A setup
-    /// opened later starts at its first step, with the intro one click away.
-    static func playsIntro(in defaults: UserDefaults, reduceMotion: Bool) -> Bool {
-        !reduceMotion && opensAtLaunch(in: defaults)
     }
 
     /// Setup was skipped and never finished, so Settings offers to finish it.
