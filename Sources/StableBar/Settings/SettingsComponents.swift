@@ -390,7 +390,7 @@ extension SettingsCallout where Trailing == EmptyView {
 }
 
 enum PackageOrigin: Equatable {
-    case builtIn, included, store, listed, installed, local, saved, themeLink, barLink
+    case builtIn, included, store, listed, installed, local, saved, themeLink, barLink, retired
     /// A private package source, by its name.
     case privateSource(String)
 
@@ -405,6 +405,7 @@ enum PackageOrigin: Equatable {
         case .saved: "Saved by you"
         case .themeLink: "From a link"
         case .barLink: "Shared"
+        case .retired: "Retired"
         case let .privateSource(name): name
         }
     }
@@ -418,13 +419,14 @@ enum PackageOrigin: Equatable {
         case .saved: "person.fill"
         case .themeLink: "link"
         case .barLink: "person.2.fill"
+        case .retired: "archivebox.fill"
         case .privateSource: "lock.fill"
         }
     }
 
     var tint: Color {
         switch self {
-        case .builtIn, .included, .installed, .local: .secondary
+        case .builtIn, .included, .installed, .local, .retired: .secondary
         case .store, .listed: .blue
         case .saved: .purple
         case .themeLink, .barLink: .indigo
@@ -444,6 +446,7 @@ enum PackageOrigin: Equatable {
             case .saved?: return .saved
             case .themeLink?: return .themeLink
             case .barLink?: return .barLink
+            case .retired?: return .retired
             case nil: return .local
             }
         }
@@ -485,7 +488,7 @@ struct PackageOriginBadge: View {
 
     private var background: AnyShapeStyle {
         switch source {
-        case .builtIn, .included, .installed, .local: AnyShapeStyle(SettingsPalette.control)
+        case .builtIn, .included, .installed, .local, .retired: AnyShapeStyle(SettingsPalette.control)
         case .store, .listed, .saved, .themeLink, .barLink, .privateSource: AnyShapeStyle(source.tint.opacity(0.15))
         }
     }

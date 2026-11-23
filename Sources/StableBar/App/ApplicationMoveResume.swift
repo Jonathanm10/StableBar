@@ -3,7 +3,7 @@ import Foundation
 /// Private relaunch state, never configuration syntax. A version lets later builds safely ignore another format.
 struct ApplicationMoveResume: Codable, Sendable {
     enum Kind: String, Codable, Sendable { case setup, settings }
-    var version = 1
+    var version = 2
     var kind: Kind
     var configuration: URL
     /// A screen setup can use its own bar while --config still names the shared configuration.
@@ -65,9 +65,12 @@ struct ApplicationMoveResumeStore: Codable, Sendable {
         CFPreferencesAppSynchronize(domain as CFString)
         guard let value = CFPreferencesCopyAppValue(Self.key as CFString, domain as CFString) else { return nil }
         guard let data = value as? Data,
-              let resume = try? JSONDecoder().decode(ApplicationMoveResume.self, from: data), resume.version == 1,
-              (0..<15 * 60).contains(now.timeIntervalSince(resume.timestamp)),
-              resume.kind != .setup || resume.setup.map({ SetupSession.Step.allCases.indices.contains($0.step) }) == true else {
+              let resume = try? JSONDecoder().decode(ApplicationMoveResume.self, from: data), resume.version == 2,
+              (0..<15 * 60).contains(now.timeIntervalSince(resume.timestamp)) else {
+            try? discard()
+            return nil
+        }
+        guard resume.kind != .setup || resume.setup.map({ SetupSession.Step.allCases.indices.contains($0.step) }) == true else {
             try? discard()
             return nil
         }

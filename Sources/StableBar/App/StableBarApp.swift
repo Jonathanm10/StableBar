@@ -316,6 +316,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
+        if let window = statusItem.button?.window { MenuBarAppearance.shared.watch(window) }
         store.onConfigurationChange = { [weak self] in
             guard let self else { return }
             updatePanels()
@@ -390,10 +391,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             systemContext!.watch(store.profiles.filter(\.enabled))
             if let kind = applicationMoveResume.pendingKind {
                 switch kind {
-                case .setup: showSetup()
+                case .setup: openSetup(reopened: false)
                 case .settings: customization.show(store: store, section: .general)
                 }
-            } else if !applicationMoveResume.wasResuming, SetupProgress.opensAtLaunch(in: .standard) { showSetup() }
+            } else if !applicationMoveResume.wasResuming, SetupProgress.opensAtLaunch(in: .standard) { openSetup(reopened: false) }
             await store.crashReports.refresh()
             if appIsInApplications() {
                 Task.detached { await ApplicationMover.cleanUpPreviousCopies(using: ApplicationMoveSystem()) }
@@ -624,18 +625,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         themeTrial.show(store: store, bar: bar, screen: screen)
     }
 
-    @objc func showSetup() {
-        setup.show(store: store,
-            arrangeBar: { [weak self] in self?.store.barEditing.begin() },
-            customizeWidgets: { [weak self] in
-                guard let self else { return }
-                customization.show(store: store, section: .widgets)
-            },
-            showProfile: { [weak self] name in
-                guard let self else { return }
-                customization.show(store: store, section: .profiles)
-                store.onCustomizeProfile?(name)
-            })
+    @objc func showSetup() { openSetup(reopened: true) }
+
+    private func openSetup(reopened: Bool) {
+        setup.show(store: store, reopened: reopened, editBar: { [weak self] in self?.store.barEditing.begin() })
     }
     @objc private func quit() { NSApp.terminate(nil) }
 

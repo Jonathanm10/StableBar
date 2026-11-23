@@ -7,6 +7,20 @@ final class WidgetScripts {
     var actionErrors: [String: String] = [:]
     var scripts: [String: ScriptWidget] = [:]
     var providers: [String: ScriptWidget] = [:]
+    /// Outputs that providers of these types show instead of running, by type, such as setup's sample meeting.
+    var setupOutputs: [String: ScriptOutput] = [:] {
+        didSet {
+            guard let store, let configuration = store.configuration else { return }
+            let types = Set(oldValue.keys).union(setupOutputs.keys)
+            for (name, script) in providers where types.contains(configuration.providers[name]!.type) {
+                script.stop()
+                providers.removeValue(forKey: name)
+            }
+            run(configuration)
+            store.barPresentation.preparePresentations()
+            updateSuspension()
+        }
+    }
     private var visibleWidgets: [Int: Set<String>] = [:]
     private var pauses: Set<PauseReason> = []
     var popupWidgetID: String?
@@ -59,7 +73,9 @@ final class WidgetScripts {
                     }
                 }
             }
-            if provider.type == DataSourceType.merge.name {
+            if let output = setupOutputs[provider.type] {
+                try! script.accept(output)
+            } else if provider.type == DataSourceType.merge.name {
                 script.start(schedule: SourceSchedule(continuous: true)) { [weak self] in
                     MergeSource(inputs: provider.providers) { self?.providers[$0] }
                 }

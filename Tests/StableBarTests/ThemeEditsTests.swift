@@ -79,9 +79,9 @@ struct ThemeEditsTests {
         #expect(store.activeProfiles == ["work", "Test theme edits"])
         #expect(store.configuration?.defaults.fontSize == 14)
 
-        let builtIn = try #require(editor.gallery.choices.first { $0.key == "built-in" })
-        try store.configurationStore.applyTheme(builtIn)
-        #expect(store.configuration?.defaults.fontSize == nil)
+        let glass = try #require(editor.gallery.choices.first { $0.key == "glass" })
+        try store.configurationStore.applyTheme(glass)
+        #expect(store.configuration?.defaults.fontSize == 13)
         let theme = try #require(editor.gallery.choices.first { $0.manifest.id == "test-theme" })
         try store.configurationStore.applyTheme(theme)
         #expect(store.configuration?.defaults.fontSize == 14)
@@ -154,7 +154,7 @@ struct ThemeEditsTests {
 
         editor.gallery.configurationChanged()
         edits = editor.gallery.edits
-        editor.change(edits.applyingToEveryTheme(try #require(edits.changes.first)))
+        editor.change(try edits.applyingToEveryTheme(try #require(edits.changes.first), themes: editor.gallery.choices, store: store.configurationStore))
         #expect(try fixture.document()["defaults"] == .object(["fontSize": .number(15)]))
         #expect(try profiles(fixture).isEmpty)
         #expect(store.customizationHistory.undoSteps.count == 2)
@@ -177,6 +177,61 @@ struct ThemeEditsTests {
         #expect(try profiles(fixture).first?["configuration"] == .object(["defaults": .object(["cornerRadius": .number(3)])]))
         #expect(try fixture.document()["widgets"]?.decoded([[String: ConfigurationValue]].self).first?["style"] == nil)
         #expect(store.customizationHistory.undoSteps.count == 1)
+    }
+
+    @Test func aWidgetJoiningTheThemesGroupIsAnEditButNotAStyleAndEveryThemeGetsTheGroup() async throws {
+        let (fixture, store, editor) = try await editor(#"""
+        {"theme":{"id":"test-theme","version":"1"},"widgets":[{"id":"clock","type":"clock","position":"right"}],
+         "profiles":[{"name":"Test theme edits","when":{"theme":"test-theme"},
+                      "configuration":{"widgetOverrides":{"clock":{"group":"pill"}}}}]}
+        """#, theme: #"{"groups":{"pill":{}}}"#)
+        defer { fixture.close(); store.stop() }
+        let edits = editor.gallery.edits
+        #expect(edits.changes.map(\.title) == ["Group"])
+        #expect(editor.ownStyle(of: try #require(store.configuration?.widgets.first)) == (everyTheme: 0, onTheme: 0))
+
+        editor.change(try edits.applyingToEveryTheme(try #require(edits.changes.first), themes: editor.gallery.choices, store: store.configurationStore))
+        #expect(try profiles(fixture).isEmpty)
+        #expect(try fixture.document()["groups"] == .object(["pill": .object([:])]))
+        try store.configurationStore.applyTheme(try #require(editor.gallery.choices.first { $0.key == "glass" }))
+        #expect(store.configurationError == nil)
+        #expect(store.configuration?.widgets.first?.group == "pill")
+    }
+
+    /// The clock stays on the right, or a profile for this theme only puts it beside the note.
+    @Test(arguments: [#"{}"#, #"{"widgetOverrides":{"clock":{"position":"left"}}}"#])
+    func aWidgetJoinsTheThemesGroupUnderEveryThemeOnlyBesideItsOtherMembers(themeOnly: String) async throws {
+        let (fixture, store, editor) = try await editor(#"""
+        {"theme":{"id":"test-theme","version":"1"},"groups":{"pill":{}},
+         "widgets":[{"id":"note","type":"text","text":"Hi","position":"left","group":"pill"},
+                    {"id":"clock","type":"clock","position":"right"}],
+         "profiles":[{"name":"Test theme edits","when":{"theme":"test-theme"},
+                      "configuration":{"widgetOverrides":{"clock":{"group":"pill"}}}},
+                     {"name":"Left clock","when":{"theme":"test-theme"},"configuration":\#(themeOnly)}]}
+        """#, theme: #"{"groups":{"pill":{"members":[{"others":true}]}}}"#)
+        defer { fixture.close(); store.stop() }
+        let edits = editor.gallery.edits
+
+        #expect(throws: CommandFailure.self) {
+            try edits.applyingToEveryTheme(try #require(edits.changes.first), themes: editor.gallery.choices, store: store.configurationStore)
+        }
+    }
+
+    @Test func aWidgetJoinsUnderEveryThemeAGroupTheMainFileLetsHoldWidgetsInSeveralPositions() async throws {
+        let (fixture, store, editor) = try await editor(#"""
+        {"theme":{"id":"test-theme","version":"1"},"groups":{"pill":{"members":[{"others":true}]}},
+         "widgets":[{"id":"note","type":"text","text":"Hi","position":"left","group":"pill"},
+                    {"id":"clock","type":"clock","position":"right"}],
+         "profiles":[{"name":"Test theme edits","when":{"theme":"test-theme"},
+                      "configuration":{"widgetOverrides":{"clock":{"group":"pill"}}}}]}
+        """#)
+        defer { fixture.close(); store.stop() }
+        let edits = editor.gallery.edits
+
+        editor.change(try edits.applyingToEveryTheme(try #require(edits.changes.first), themes: editor.gallery.choices, store: store.configurationStore))
+        #expect(editor.error == nil)
+        #expect(try profiles(fixture).isEmpty)
+        #expect(store.configuration?.widgets.map(\.group) == ["pill", "pill"])
     }
 
     @Test func savingAThemeUnderItsOwnNameKeepsItsWidgetEdits() async throws {

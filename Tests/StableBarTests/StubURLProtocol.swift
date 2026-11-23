@@ -4,11 +4,13 @@ import os
 
 /// Serves canned responses and redirects to a URLSession, and logs every request it receives.
 /// Tests use hosts of their own, so tests running in parallel don't collide.
-final class StubURLProtocol: URLProtocol {
+final class StubURLProtocol: URLProtocol, @unchecked Sendable {
     private struct State {
         var responses: [URL: Data] = [:]
         var redirects: [URL: URL] = [:]
         var requests: [URLRequest] = []
+        /// The requests waiting for each held URL's response.
+        var held: [URL: [StubURLProtocol]] = [:]
     }
 
     private static let state = OSAllocatedUnfairLock(initialState: State())
@@ -22,6 +24,20 @@ final class StubURLProtocol: URLProtocol {
     }
 
     static var requests: [URLRequest] { state.withLock { $0.requests } }
+
+    /// Holds the responses for `url` until `release(url)`, so a test can act while a request waits for one.
+    static func hold(_ url: URL) {
+        state.withLock { $0.held[url] = [] }
+    }
+
+    /// Whether a request for `url` waits for its held response.
+    static func isHolding(_ url: URL) -> Bool {
+        state.withLock { $0.held[url]?.isEmpty == false }
+    }
+
+    static func release(_ url: URL) {
+        for request in state.withLock({ $0.held.removeValue(forKey: url) }) ?? [] { request.respond() }
+    }
 
     static func session() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
@@ -38,10 +54,17 @@ final class StubURLProtocol: URLProtocol {
     override func startLoading() {
         guard let url = request.url else { return client?.urlProtocol(self, didFailWithError: URLError(.badURL)) ?? () }
         let received = request
-        let (data, target) = Self.state.withLock { state -> (Data?, URL?) in
+        let held = Self.state.withLock { state in
             state.requests.append(received)
-            return (state.responses[url], state.redirects[url])
+            state.held[url]?.append(self)
+            return state.held[url] != nil
         }
+        if !held { respond() }
+    }
+
+    private func respond() {
+        let url = request.url!
+        let (data, target) = Self.state.withLock { ($0.responses[url], $0.redirects[url]) }
         if let target {
             let response = HTTPURLResponse(url: url, statusCode: 302, httpVersion: nil, headerFields: ["Location": target.absoluteString])!
             var next = URLRequest(url: target)

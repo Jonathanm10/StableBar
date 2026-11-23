@@ -22,7 +22,9 @@ func previewWallpaperLeavesTheSettingsHeaderClickable(width: Double) async throw
             .frame(height: 52)
         ScreenBand(editor: editor, kinds: [.laptop, .monitor], screen: .laptop, useSharedBar: { _ in })
             .frame(height: 100)
-        Wallpaper(backgroundImage: image)
+        SampleWallpaper()
+            .environment(\.offscreenSnapshot, true)
+            .environment(\.sceneWallpaper, image)
             .frame(height: 82)
             .clipShape(RoundedRectangle(cornerRadius: 9))
     }

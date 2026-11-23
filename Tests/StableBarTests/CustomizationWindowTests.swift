@@ -3,55 +3,60 @@ import SwiftUI
 import Testing
 @testable import StableBar
 
-@Test @MainActor func settingsClearsAutomaticSearchFocusOnlyOnFirstActivation() async throws {
-    let fixture = try ThemeGalleryFixture()
-    defer { fixture.close() }
-    let store = try fixture.store()
-    defer { store.stop() }
-    var shown: NSWindow?
-    let settings = CustomizationWindow(present: { window in
-        // The autosave name is process-wide; other Settings tests use it in parallel.
-        window.setFrameAutosaveName("")
-        window.alphaValue = 0
-        window.setFrameOrigin(NSPoint(x: -9000, y: -6000))
-        window.orderFrontRegardless()
-        shown = window
-    })
+/// Tests that need the app's real key window run one at a time: two of them at once take key from each other.
+@MainActor @Suite(.serialized) struct KeyWindowTests {}
 
-    func searchField(in view: NSView) -> NSTextField? {
-        if let field = view as? NSTextField, field.placeholderString == "Search settings" { return field }
-        return view.subviews.lazy.compactMap { searchField(in: $0) }.first
-    }
+extension KeyWindowTests {
+    @Test func settingsClearsAutomaticSearchFocusOnlyOnFirstActivation() async throws {
+        let fixture = try ThemeGalleryFixture()
+        defer { fixture.close() }
+        let store = try fixture.store()
+        defer { store.stop() }
+        var shown: NSWindow?
+        let settings = CustomizationWindow(present: { window in
+            // The autosave name is process-wide; other Settings tests use it in parallel.
+            window.setFrameAutosaveName("")
+            window.alphaValue = 0
+            window.setFrameOrigin(NSPoint(x: -9000, y: -6000))
+            window.orderFrontRegardless()
+            shown = window
+        })
 
-    for _ in 0..<2 {
-        settings.show(store: store)
-        let window = try #require(shown)
-        defer { window.close(); shown = nil }
-        let host = try #require(window.contentView)
-        try await awaitCondition {
-            host.layoutSubtreeIfNeeded()
-            return searchField(in: host) != nil
+        func searchField(in view: NSView) -> NSTextField? {
+            if let field = view as? NSTextField, field.placeholderString == "Search settings" { return field }
+            return view.subviews.lazy.compactMap { searchField(in: $0) }.first
         }
-        let search = try #require(searchField(in: host))
-        // The test runner is inactive; deliver AppKit's initial key-view selection and activation explicitly.
-        window.makeFirstResponder(nil)
-        window.selectNextKeyView(nil)
-        try await awaitCondition { search.currentEditor() != nil }
-        let activation = Notification(name: NSWindow.didBecomeKeyNotification, object: window)
-        window.delegate?.windowDidBecomeKey?(activation)
-        #expect(search.currentEditor() == nil)
 
-        let find = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command],
-            timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "f",
-            charactersIgnoringModifiers: "f", isARepeat: false, keyCode: 3))
-        #expect(window.performKeyEquivalent(with: find))
-        try await awaitCondition { search.currentEditor() != nil }
-        window.delegate?.windowDidBecomeKey?(activation)
-        #expect(search.currentEditor() != nil)
+        for _ in 0..<2 {
+            settings.show(store: store)
+            let window = try #require(shown)
+            defer { window.close(); shown = nil }
+            let host = try #require(window.contentView)
+            try await awaitCondition {
+                host.layoutSubtreeIfNeeded()
+                return searchField(in: host) != nil
+            }
+            let search = try #require(searchField(in: host))
+            // The test runner is inactive; deliver AppKit's initial key-view selection and activation explicitly.
+            window.makeFirstResponder(nil)
+            window.selectNextKeyView(nil)
+            try await awaitCondition { search.currentEditor() != nil }
+            let activation = Notification(name: NSWindow.didBecomeKeyNotification, object: window)
+            window.delegate?.windowDidBecomeKey?(activation)
+            #expect(search.currentEditor() == nil)
 
-        window.makeFirstResponder(nil)
-        window.selectNextKeyView(nil)
-        try await awaitCondition { search.currentEditor() != nil }
+            let find = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command],
+                timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "f",
+                charactersIgnoringModifiers: "f", isARepeat: false, keyCode: 3))
+            #expect(window.performKeyEquivalent(with: find))
+            try await awaitCondition { search.currentEditor() != nil }
+            window.delegate?.windowDidBecomeKey?(activation)
+            #expect(search.currentEditor() != nil)
+
+            window.makeFirstResponder(nil)
+            window.selectNextKeyView(nil)
+            try await awaitCondition { search.currentEditor() != nil }
+        }
     }
 }
 

@@ -233,9 +233,11 @@ private final class OverflowMenuReadFixture: @unchecked Sendable {
     #expect(source.reads == [100])
 }
 
-@Test @MainActor func aSuccessfulEmptyMenuReadClearsPreviousMenusWithoutRetrying() async {
+/// An app that is still launching can list no menus yet, and App menus without menus leave the bar, so an empty read
+/// is tried again like a failed one.
+@Test @MainActor func aSuccessfulEmptyMenuReadClearsPreviousMenusAndIsTriedAgain() async {
     let source = MenuReadFixture()
-    let menu = AppMenu(checkAccess: { source.trusted }, readAttribute: source.read)
+    let menu = AppMenu(checkAccess: { source.trusted }, readAttribute: source.read, sleep: { _ in })
     menu.read(MenuApplication(pid: 100))
     await menu.readTask?.value
     source.empty = true
@@ -243,7 +245,7 @@ private final class OverflowMenuReadFixture: @unchecked Sendable {
     await menu.readTask?.value
     #expect(menu.appleMenu == nil)
     #expect(menu.items.isEmpty)
-    #expect(source.reads == [100, 100])
+    #expect(source.reads == [100, 100, 100, 100, 100, 100])
 }
 
 @Test @MainActor func menuRecoveryStopsAfterFourRetries() async {
