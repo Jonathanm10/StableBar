@@ -167,6 +167,7 @@ final class ConfigurationEditsTests: XCTestCase {
         { "id": "sound", "type": "audio", "position": "right" },
         { "id": "off", "type": "audio", "position": "right", "details": false },
         { "id": "clicked", "type": "audio", "position": "right", "onClick": "open -a 'Audio MIDI Setup'" },
+        { "id": "cleared", "type": "audio", "position": "right", "open": null },
         { "id": "battery", "type": "battery", "position": "right" }
       ]
     }
@@ -177,5 +178,5 @@ final class ConfigurationEditsTests: XCTestCase {
 
     try migrateEarlierSoundDetails(url, pinned: "0.19.0-beta.20261123164352.1618")
     let widgets = try JSONDecoder().decode(Configuration.self, from: Data(contentsOf: url)).widgets
-    #expect(widgets.map(\.details) == [true, false, false, false])
+    #expect(widgets.map(\.details) == [true, false, false, true, false])
 }

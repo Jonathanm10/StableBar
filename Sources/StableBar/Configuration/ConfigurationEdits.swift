@@ -349,7 +349,8 @@ func migrateEarlierSoundDetails(_ url: URL, pinned: String?, savedBy release: St
     guard case var .array(widgets) = root["widgets"] else { return }
     let kept = ["details", "onClick", "open", "menu", "popup", "popupName"]
     for (index, value) in widgets.enumerated() {
-        guard case var .object(widget) = value, widget["type"] == .string("audio"), kept.allSatisfy({ widget[$0] == nil }) else { continue }
+        guard case var .object(widget) = value, widget["type"] == .string("audio"),
+              kept.allSatisfy({ (widget[$0] ?? .null) == .null }) else { continue }
         widget["details"] = .bool(true)
         widgets[index] = .object(widget)
     }
