@@ -33,6 +33,16 @@ private func topRow(_ image: NSImage) -> [[UInt8]] {
     #expect(topRow(copy.image) == [[0, 0, 0, 255], [0, 0, 0, 128]])
 }
 
+@Test func menuBarItemCopyOnAnOpaqueMenuBarDrawsAsOnATransparentOne() throws {
+    // The same white and gray columns, on an opaque black menu bar.
+    let copy = try #require(MenuBarItemImage(copying: image(width: 6, height: 4) { x, _ in
+        x == 2 ? [255, 255, 255, 255] : x == 3 ? [128, 128, 128, 255] : [0, 0, 0, 255]
+    }, scale: 2))
+    #expect(copy.isTemplate)
+    #expect(copy.image.size == NSSize(width: 1, height: 2))
+    #expect(topRow(copy.image) == [[0, 0, 0, 255], [0, 0, 0, 128]])
+}
+
 @Test func menuBarItemCopyOfABlackItemKeepsItsShape() throws {
     let copy = try #require(MenuBarItemImage(copying: image(width: 3, height: 2) { x, _ in
         x == 1 ? [0, 0, 0, 255] : [0, 0, 0, 0]
@@ -57,8 +67,8 @@ private func topRow(_ image: NSImage) -> [[UInt8]] {
     func copy(_ alpha: UInt8) throws -> MenuBarItemImage {
         try #require(MenuBarItemImage(copying: image(width: 2, height: 2) { _, _ in [alpha, alpha, alpha, alpha] }, scale: 1))
     }
-    #expect(try copy(255) == copy(255))
-    #expect(try copy(255) != copy(200))
+    #expect(try copy(200) == copy(200))
+    #expect(try copy(200) != copy(100))
 }
 
 @Test func menuBarItemsLeftOfTheirBarsOverflowButtonAreCollapsed() {

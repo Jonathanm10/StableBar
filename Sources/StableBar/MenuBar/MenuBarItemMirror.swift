@@ -182,6 +182,22 @@ struct MenuBarItemImage: Equatable {
               let data = context.data else { return nil }
         context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
         let bytes = data.bindMemory(to: UInt8.self, capacity: width * height * 4)
+        // With Reduce transparency the copy holds the menu bar's opaque background. When the corners are one opaque
+        // color, take it out: each pixel keeps the least opacity that draws it over that color.
+        let corners = [0, width - 1, (height - 1) * width, height * width - 1].map { $0 * 4 }
+        let backdrop = (0..<4).map { bytes[$0] }
+        if backdrop[3] == 255, corners.allSatisfy({ corner in (0..<4).allSatisfy { bytes[corner + $0] == backdrop[$0] } }) {
+            for pixel in stride(from: 0, to: width * height * 4, by: 4) {
+                let alpha = (0..<3).map { channel in
+                    let value = Double(bytes[pixel + channel]), base = Double(backdrop[channel])
+                    return value > base ? (value - base) / (255 - base) : value < base ? (base - value) / base : 0
+                }.max()!
+                for channel in 0..<3 {
+                    bytes[pixel + channel] = UInt8((Double(bytes[pixel + channel]) - (1 - alpha) * Double(backdrop[channel])).rounded())
+                }
+                bytes[pixel + 3] = UInt8((alpha * 255).rounded())
+            }
+        }
         func brightness(_ pixel: Int) -> Double {
             0.299 * Double(bytes[pixel]) + 0.587 * Double(bytes[pixel + 1]) + 0.114 * Double(bytes[pixel + 2])
         }
