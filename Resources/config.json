@@ -20,7 +20,8 @@
     {
       "id": "sound",
       "type": "audio",
-      "position": "right"
+      "position": "right",
+      "details": true
     },
     {
       "id": "clock",

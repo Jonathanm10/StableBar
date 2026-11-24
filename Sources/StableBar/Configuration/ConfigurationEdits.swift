@@ -340,6 +340,24 @@ func migrateStarterAppleLogo(_ url: URL, savedBy release: String? = AppVersion.r
     try writeConfiguration(configurationData(root, editing: original, savedBy: release), to: url)
 }
 
+/// Turns on the details popup of the Sound widgets in a file saved before 0.19.0, which brought it. A widget that sets
+/// `details`, a click action or a popup keeps what it says.
+func migrateEarlierSoundDetails(_ url: URL, pinned: String?, savedBy release: String? = AppVersion.release) throws {
+    if let pinned, compareReleases(pinned, "0.19.0") != .orderedAscending { return }
+    let original = try Data(contentsOf: url)
+    var root = try JSONDecoder().decode([String: ConfigurationValue].self, from: original)
+    guard case var .array(widgets) = root["widgets"] else { return }
+    let kept = ["details", "onClick", "open", "menu", "popup", "popupName"]
+    for (index, value) in widgets.enumerated() {
+        guard case var .object(widget) = value, widget["type"] == .string("audio"), kept.allSatisfy({ widget[$0] == nil }) else { continue }
+        widget["details"] = .bool(true)
+        widgets[index] = .object(widget)
+    }
+    guard root["widgets"] != .array(widgets) else { return }
+    root["widgets"] = .array(widgets)
+    try writeConfiguration(configurationData(root, editing: original, savedBy: release), to: url)
+}
+
 /// Selects an installed package in place of a retired theme's frozen copy: the Store's package of a theme that moved to
 /// the Store, installed from its copy in `storeThemes`, or a copy of an older one's own files. A file pinned to this release
 /// or a newer one before the launch's migrations, `pinned`, keeps its selections, since only a hand edit selects a frozen

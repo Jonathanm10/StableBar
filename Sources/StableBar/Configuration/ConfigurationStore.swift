@@ -59,6 +59,7 @@ final class ConfigurationStore {
         try migrateEarlierColors(sharedConfigurationURL, savedBy: release)
         try migrateConfigurationFile(sharedConfigurationURL, savedBy: release)
         try migrateStarterAppleLogo(sharedConfigurationURL, savedBy: release)
+        try migrateEarlierSoundDetails(sharedConfigurationURL, pinned: pinned, savedBy: release)
         try? migrateRetiredThemes(sharedConfigurationURL, pinned: pinned, themes: themesDirectory, storeThemes: storeThemesDirectory,
                                   savedBy: release)
         for url in screenSetupsWithOwnBars.map(ownBarURL(for:)) {
@@ -66,6 +67,7 @@ final class ConfigurationStore {
             try? migrateEarlierColors(url, savedBy: release)
             try? migrateConfigurationFile(url, savedBy: release)
             try? migrateStarterAppleLogo(url, savedBy: release)
+            try? migrateEarlierSoundDetails(url, pinned: pinned, savedBy: release)
             try? migrateRetiredThemes(url, pinned: pinned, themes: themesDirectory, storeThemes: storeThemesDirectory, savedBy: release)
         }
         // Earlier setups put a bar below the menu bar at the status bar's thickness or the main display's notch height.
