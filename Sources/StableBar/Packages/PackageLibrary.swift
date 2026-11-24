@@ -695,7 +695,8 @@ final class PackageLibrary {
     func deactivate(_ draft: PackageDraft) {
         guard let store else { return }
         do {
-            try store.customizationHistory.change(edit(draft, enabled: false))
+            try store.customizationHistory.change(draft.inspection.manifest.kind == .theme
+                ? store.configurationStore.firstIncludedThemeEdit() : edit(draft, enabled: false))
             draft.error = nil
             configurationChanged()
         } catch {
@@ -716,6 +717,18 @@ final class PackageLibrary {
         } catch {
             if let draft { draft.error = errorMessage(error) } else { self.error = errorMessage(error) }
         }
+    }
+
+    /// Uninstalls every version of theme `id`, as a gallery card stands for the whole theme. Reads the versions from
+    /// disk, since the Store may not have loaded them.
+    func uninstallTheme(id: String) async throws {
+        guard let store else { return }
+        for manifest in try await client.installed() where manifest.id == id {
+            try store.configurationStore.uninstallPackage(id: id, version: manifest.version, fromCustomization: true)
+            drafts[manifest.versionKey] = nil
+        }
+        if draft?.inspection.manifest.id == id { draft = nil }
+        await loadInstalled()
     }
 
     private func edit(_ draft: PackageDraft, enabled: Bool) -> ConfigurationEdit {
@@ -820,5 +833,11 @@ extension PackageCatalog {
             suggestion.tools.contains { tool in path.contains { FileManager.default.isExecutableFile(atPath: "\($0)/\(tool)") } }
                 || suggestion.apps.contains { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) != nil }
         }.flatMap(\.packages))
+    }
+
+    /// The Store's widgets this Mac can use: one the Store suggests for some tools or apps needs `suggested` to name it.
+    func storeWidgets(suggested: Set<String>) -> [PackageIndex.Entry] {
+        let needsTools = Set(suggestions.flatMap(\.packages))
+        return widgets.filter { $0.sourceID == PackageSource.storeID && (!needsTools.contains($0.id) || suggested.contains($0.id)) }
     }
 }

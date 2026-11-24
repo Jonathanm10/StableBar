@@ -7,7 +7,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Search [open and closed issues](https://github.com/Seb-GRAF/StableBar/issues?q=is%3Aissue) first, and keep the report to one problem. Redact tokens, keys and personal details from configuration and logs.
+        Search [open and closed issues](https://github.com/stablebox/StableBar/issues?q=is%3Aissue) first, and keep the report to one problem. Redact tokens, keys and personal details from configuration and logs.
 
   - type: textarea
     id: what-happens
@@ -54,7 +54,7 @@ body:
     id: evidence
     attributes:
       label: Evidence
-      description: The relevant part of your configuration, script output, error text or logs. If StableBar quit unexpectedly, paste the report from Settings → Status → Crashes → Copy report. Drag screenshots or recordings in here.
+      description: The relevant part of your configuration, script output, error text or logs. If StableBar quit unexpectedly, paste the report from Settings → Status → Crashes → Copy report. For a problem with how the bar looks or where widgets sit, add a bar link if your bar's menu has Share My Bar… (releases after 0.17.0). Check What it shares, then use Copy Link. It leaves out script widgets, custom providers and profiles. Drag screenshots or recordings in here.
 
   - type: textarea
     id: related

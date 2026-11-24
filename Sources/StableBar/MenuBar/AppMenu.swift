@@ -83,7 +83,8 @@ final class AppMenu: NSObject {
                 for delay in [0, 250, 500, 1000, 2000] {
                     try await sleep(.milliseconds(delay))
                     guard let self else { return }
-                    if try await readItems() { return }
+                    // An app that is still launching can list no menus yet, so an empty read is tried again too.
+                    if try await readItems(), !isTrusted || app == nil || !items.isEmpty { return }
                 }
             } catch {}
         }
@@ -339,13 +340,10 @@ final class AppMenu: NSObject {
     private func pressInMenuBar(_ item: AXUIElement, on display: CGDirectDisplayID, rightClick: Bool = false) {
         let top = CGDisplayBounds(display).minY
         let readAttribute = readAttribute, sleep = sleep, menuBar = menuBar
+        let button: CGMouseButton = rightClick ? .right : .left
         Task {
             if await Task.detached(operation: { menuBar.shows(display) }).value {
-                if rightClick {
-                    await rightClickInMenuBar(item, on: display)
-                } else {
-                    Task.detached { AXUIElementPerformAction(item, kAXPressAction as CFString) }
-                }
+                await clickInMenuBar(item, on: display, button: button)
                 return
             }
             menuBarPresses += 1
@@ -358,9 +356,8 @@ final class AppMenu: NSObject {
                     if menuBar.shows(display), frame(of: item, readAttribute).minY >= top { break }
                     try? await sleep(.milliseconds(20))
                 }
-                if !rightClick { AXUIElementPerformAction(item, kAXPressAction as CFString) }
             }.value
-            if rightClick { await rightClickInMenuBar(item, on: display) }
+            await clickInMenuBar(item, on: display, button: button)
             menuBar.setShown(false, display)
             await Task.detached {
                 var hiddenChecks = 0
@@ -374,9 +371,10 @@ final class AppMenu: NSObject {
         }
     }
 
-    /// Right-clicks the item by sending the click to MenuBarAgent, which draws the menu bar and passes the click on to
-    /// the item's app, so the pointer stays where it is. Where that can't be done, the item gets a press.
-    private func rightClickInMenuBar(_ item: AXUIElement, on display: CGDirectDisplayID) async {
+    /// Clicks the item by sending the click to MenuBarAgent, which draws the menu bar and passes the click on to the
+    /// item's app, so the pointer stays where it is. A press through Accessibility reaches an app as a left click, except
+    /// a SwiftUI menu bar extra that opens a window, which ignores it. Where a click can't be sent, the item gets a press.
+    private func clickInMenuBar(_ item: AXUIElement, on display: CGDirectDisplayID, button: CGMouseButton) async {
         let readAttribute = readAttribute, mouse = mouse
         let (itemFrame, window) = await Task.detached { (frame(of: item, readAttribute), mouse.menuBarWindow(display)) }.value
         guard !itemFrame.isEmpty, let window else {
@@ -384,7 +382,7 @@ final class AppMenu: NSObject {
             _ = await Task.detached { AXUIElementPerformAction(item, kAXPressAction as CFString) }.value
             return
         }
-        mouse.rightClick(CGPoint(x: itemFrame.midX, y: itemFrame.midY), window)
+        mouse.click(CGPoint(x: itemFrame.midX, y: itemFrame.midY), window, button)
         // A menu the click opens keeps a revealed menu bar from hiding again, once it's open.
         try? await sleep(.milliseconds(MenuBarVisibility.clickDelivery))
     }
@@ -823,7 +821,7 @@ struct MenuBarWindow: Equatable, Sendable {
     let frame: CGRect
 }
 
-/// The mouse as a right-click on a menu bar item needs it, so that a test can stand in for it.
+/// The mouse as a click on a menu bar item needs it, so that a test can stand in for it.
 struct MenuBarMouse: Sendable {
     var rightButtonIsDown: @Sendable () -> Bool = { CGEventSource.buttonState(.hidSystemState, button: .right) }
     /// MenuBarAgent's window for the menu bar on a display, on a macOS where it draws the menu bar and a click can be
@@ -835,8 +833,8 @@ struct MenuBarMouse: Sendable {
         let windows = CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID) as? [[String: Any]] ?? []
         return menuBarAgentWindow(agent: agent, display: CGDisplayBounds(display), windows: windows)
     }
-    var rightClick: @Sendable (CGPoint, MenuBarWindow) -> Void = { point, window in
-        for event in menuBarRightClick(at: point, in: window) { event.postToPid(window.agent) }
+    var click: @Sendable (CGPoint, MenuBarWindow, CGMouseButton) -> Void = { point, window, button in
+        for event in menuBarClick(at: point, in: window, button: button) { event.postToPid(window.agent) }
     }
 }
 
@@ -858,14 +856,15 @@ func menuBarAgentWindow(agent: pid_t, display: CGRect, windows: [[String: Any]])
     return nil
 }
 
-/// A right-click at `point`, in global display coordinates, for MenuBarAgent's `window`. The events come from a source
-/// of their own, so their button state never mixes with the mouse's, and they're posted to MenuBarAgent alone, so the
-/// pointer stays where it is.
-func menuBarRightClick(at point: CGPoint, in window: MenuBarWindow) -> [CGEvent] {
+/// A click of `button`, left or right, at `point`, in global display coordinates, for MenuBarAgent's `window`. The events
+/// come from a source of their own, so their button state never mixes with the mouse's, and they're posted to
+/// MenuBarAgent alone, so the pointer stays where it is.
+func menuBarClick(at point: CGPoint, in window: MenuBarWindow, button: CGMouseButton) -> [CGEvent] {
     guard let field = PrivateAPI.eventWindowField, let setWindowLocation = PrivateAPI.setEventWindowLocation,
           let source = CGEventSource(stateID: .privateState) else { return [] }
-    return [CGEventType.rightMouseDown, .rightMouseUp].compactMap { type in
-        guard let event = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: point, mouseButton: .right) else { return nil }
+    let types: [CGEventType] = button == .right ? [.rightMouseDown, .rightMouseUp] : [.leftMouseDown, .leftMouseUp]
+    return types.compactMap { type in
+        guard let event = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: point, mouseButton: button) else { return nil }
         event.setIntegerValueField(.mouseEventClickState, value: 1)
         event.setIntegerValueField(field, value: window.number)
         setWindowLocation(event, CGPoint(x: point.x - window.frame.minX, y: point.y - window.frame.minY))

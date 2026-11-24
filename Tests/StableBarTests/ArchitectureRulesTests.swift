@@ -45,10 +45,37 @@ private func swiftSources() throws -> [(path: String, text: String)] {
             \(file.path) binds a private symbol at launch, so a macOS without it can't open StableBar: \
             look it up in PrivateAPI.swift (AGENTS.md)
             """)
-        guard file.path != "StableBar/System/PrivateAPI.swift" else { continue }
+        // The now-playing library runs only inside perl, where its whole job is MediaRemote's private calls.
+        guard file.path != "StableBar/System/PrivateAPI.swift", !file.path.hasPrefix("NowPlayingAdapter/") else { continue }
         #expect(file.text.firstMatch(of: #/\b(dlsym|dlopen)\b|PrivateFrameworks/#) == nil,
                 "\(file.path) calls private macOS API: add it to PrivateAPI.swift, with a maintainer's OK (AGENTS.md)")
     }
+}
+
+/// Whether `code` draws the icon macOS looks up for this copy of the app.
+private func looksUpTheIcon(_ code: String) -> Bool {
+    // Unicode word boundaries would make `NSApp.applicationIconImage` one word.
+    code.contains(#/\b(applicationIconImage|applicationIconName)\b/#.wordBoundaryKind(.simple))
+}
+
+/// macOS looks StableBar's icon up for each copy of the app and can pick other artwork in each, so the two builds CI
+/// draws screens from would differ. Every view draws the bundled artwork from `StableBarIcon`.
+@Test func stableBarIconHasOneSource() throws {
+    let files = try swiftSources()
+    #expect(files.count > 100)
+    for file in files where file.path != "StableBar/App/StableBarIcon.swift" {
+        #expect(!looksUpTheIcon(code(file.text)), """
+            \(file.path) draws the icon macOS looks up, which can change between two copies of the app: draw \
+            StableBarIcon.image (#895)
+            """)
+    }
+}
+
+@Test func theIconCheckFindsTheIconMacOSLooksUp() {
+    #expect(looksUpTheIcon(code("Image(nsImage: NSApp.applicationIconImage)")))
+    #expect(looksUpTheIcon(code("NSImage(named: NSImage.applicationIconName)")))
+    #expect(!looksUpTheIcon(code("Image(nsImage: StableBarIcon.image) // not NSApp.applicationIconImage")))
+    #expect(!looksUpTheIcon(code("let applicationIconImages = 0")))
 }
 
 /// What a `StateMachine`'s code may not use: a UI framework, work that runs later, or the clock, the disk and the

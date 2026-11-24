@@ -65,7 +65,7 @@ private let bug = Feedback(kind: .bug, title: "The clock vanishes after sleep",
 
 @Test func feedbackFillsTheIssueFormOfItsKind() throws {
     let url = try #require(bug.issueURL())
-    #expect(url.absoluteString.hasPrefix("https://github.com/Seb-GRAF/StableBar/issues/new?"))
+    #expect(url.absoluteString.hasPrefix("https://github.com/stablebox/StableBar/issues/new?"))
     #expect(formFields(url) == ["template": "bug_report.yml", "title": "The clock vanishes after sleep", "what-happens": "It's gone.",
                                 "steps": "1. Sleep\n2. Wake", "expected": "It's back.", "environment": example.markdown])
     #expect(!url.absoluteString.contains("+"))
@@ -158,7 +158,7 @@ private let bug = Feedback(kind: .bug, title: "The clock vanishes after sleep",
     defer { fixture.close() }
     let summary = ConfigurationSummary(url: fixture.url)
     #expect(summary.text.hasPrefix("valid, 2 widgets in "))
-    #expect(summary.theme == "Built-in")
+    #expect(summary.theme == "the fallback")
     #expect(summary.packages == [])
     #expect(summary.workspaceSource == .yabai)
 
@@ -210,7 +210,7 @@ private let bug = Feedback(kind: .bug, title: "The clock vanishes after sleep",
     #expect(!report.version.isEmpty)
     #expect(report.system.contains("("))
     #expect(report.configuration.hasPrefix("\(fixture.url.path), valid, 1 widget in "))
-    #expect(report.theme == "Built-in")
+    #expect(report.theme == "the fallback")
     #expect(report.workspaceTool == "not used")
     #expect(report.displays.count == NSScreen.screens.count)
     #expect(report.live == nil)

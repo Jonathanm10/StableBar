@@ -48,7 +48,7 @@ final class ApplicationMoveController {
             barConfiguration: store.configurationStore.configurationURL, edits: store.configurationStore.sessionEdits.map(ApplicationMoveResume.Edit.init))
     }
 
-    static let setupHint = "Use Finishing touches in setup to move StableBar to Applications."
+    static let setupHint = "Use the last step of setup to move StableBar to Applications."
 
     func cancel() { offer = nil; error = nil }
 
@@ -106,12 +106,10 @@ final class ApplicationMoveController {
     }
 }
 
-/// The same controls in setup and Settings' Open at login row. Confirmation stays where the move was requested.
+/// Settings' Open at login row. Confirmation stays where the move was requested.
 struct ApplicationMoveControls: View {
     let controller: ApplicationMoveController
     let resume: () -> ApplicationMoveResume?
-    var reveal: () -> Void = {}
-    var setup = false
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 8) {
@@ -119,7 +117,7 @@ struct ApplicationMoveControls: View {
                 Text(confirmation).fixedSize(horizontal: false, vertical: true)
             }
             if let error = controller.error {
-                Text(error).foregroundStyle(setup ? Color.orange : SettingsPalette.warning)
+                Text(error).foregroundStyle(SettingsPalette.warning)
                     .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
             }
             if controller.isBusy {
@@ -128,34 +126,14 @@ struct ApplicationMoveControls: View {
                     Text("Moving and preparing to relaunch…")
                 }
             } else {
-                if setup {
-                    moveButton.buttonStyle(SetupButtonStyle(prominent: false))
-                        .fixedSize(horizontal: true, vertical: false)
-                    if controller.offer != nil { Button("Cancel", action: controller.cancel).buttonStyle(.plain) }
-                } else {
-                    HStack(spacing: 8) {
-                        if controller.offer != nil { Button("Cancel", action: controller.cancel) }
-                        moveButton
-                    }
+                HStack(spacing: 8) {
+                    if controller.offer != nil { Button("Cancel", action: controller.cancel) }
+                    Button(controller.action) { Task { await controller.proceed(resume: resume) } }
                 }
-                if controller.error != nil {
-                    if setup {
-                        finderButton.buttonStyle(SetupButtonStyle(prominent: false))
-                    } else {
-                        finderButton
-                    }
-                }
+                if controller.error != nil { Button("Show in Finder", action: controller.showInFinder) }
             }
         }
-        .font(.system(size: setup ? 12 : 13))
-        .frame(maxWidth: setup ? 264 : 360, alignment: .trailing)
-    }
-
-    private var moveButton: some View {
-        Button(controller.action) { Task { await controller.proceed(resume: resume) } }
-    }
-
-    private var finderButton: some View {
-        Button("Show in Finder") { reveal(); controller.showInFinder() }
+        .font(.system(size: 13))
+        .frame(maxWidth: 360, alignment: .trailing)
     }
 }

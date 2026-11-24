@@ -34,7 +34,7 @@ struct HelpQuestion: Identifiable {
     static let page = #"""
     # Questions
 
-    These are short answers to common questions, each with a link to the guide for the details; **Settings → Help** in StableBar shows the same page. If yours isn't here, ask it in [Q&A](https://github.com/Seb-GRAF/StableBar/discussions/categories/q-a).
+    These are short answers to common questions, each with a link to the guide for the details; **Settings → Help** in StableBar shows the same page. If yours isn't here, ask it in [Q&A](https://github.com/stablebox/StableBar/discussions/categories/q-a).
 
     ## Why do windows go under the bar?
 
@@ -46,6 +46,7 @@ struct HelpQuestion: Identifiable {
     - yabai: `external_bar` in your yabai configuration
     - OmniWM: `gaps.outer.top` in its `settings.toml`
     - Rift: `top` under `[settings.layout.gaps.outer]` in `~/.config/rift/config.toml`
+    - KiwiDesk: if windows reach under the bar, raise the top outer gap under **Gaps & Borders** in KiwiDesk's settings, which saves it with your profile. KiwiDesk adds it below the strip it keeps at the top of the screen. An `init.lua` that manages KiwiDesk itself can call `KiwiDesk.set_gap_global({ top = … })`, which resets each gap you leave out to 10.
 
     For a bar at the bottom of the screen, give it a bottom gap instead, such as `gaps.outer.bottom` in AeroSpace.
 
@@ -53,7 +54,7 @@ struct HelpQuestion: Identifiable {
 
     ## How do I hide the macOS menu bar, or keep it?
 
-    To hide it, turn on **Settings → General → Native menu bar → Automatically hide the menu bar**; StableBar then sits on the top edge in its place. To keep it, turn that switch off and turn on **Below the menu bar** in **Settings → Bar → Bar → Placement**, so StableBar sits under it. Setup asks the same question with **Replace the menu bar** and **Keep the menu bar**.
+    To hide it, turn on **Settings → General → Native menu bar → Automatically hide the menu bar**; StableBar then sits on the top edge in its place. To keep it, turn that switch off and turn on **Below the menu bar** in **Settings → Bar → Bar → Placement**, so StableBar sits under it. Setup's **Allow** hides the menu bar for you; if you click it and then don't allow StableBar when macOS asks, the bar sits below the menu bar.
 
     This changes the macOS setting itself, so it stays after StableBar quits. The first time, macOS asks to let StableBar control System Events; if you said no, turn on **System Events** under StableBar in **System Settings → Privacy & Security → Automation**.
 
@@ -73,7 +74,7 @@ struct HelpQuestion: Identifiable {
 
     ## Which permissions does StableBar ask for, and why?
 
-    Setup asks for these in its permissions step, and **Settings → General → Access** lists the ones your bar needs:
+    Setup asks for each of them on **Allow what your bar needs**, with its own **Allow…**, and **Settings → General → Access** lists the ones your bar needs:
 
     - **Accessibility** (**Device Control and Data Access** from macOS 27), for the app menus, the Apple menu, Menu bar items, Workspaces and keeping windows clear of the bar.
     - **Automation**, to control System Events, which hides or shows the macOS menu bar.
@@ -89,7 +90,7 @@ struct HelpQuestion: Identifiable {
 
     ## How do I show my workspaces on the bar?
 
-    Add **Workspaces** with **Add widget** in **Settings → Bar**. It uses whichever of AeroSpace, yabai, OmniWM or Rift is running, and your macOS Spaces when none is. To pick another source, use **Settings → General → Workspaces**.
+    Add **Workspaces** with **Add widget** in **Settings → Bar**. When you add it, it keeps the source your configuration names while that one is installed; otherwise it takes the first of AeroSpace, yabai, OmniWM, Rift and KiwiDesk that is installed and running, or your macOS Spaces when none is. The bar keeps that source and doesn't switch on its own, even when the window manager quits; to pick another, use **Settings → General → Workspaces**.
 
     Some sources need one step on their side:
 
@@ -122,7 +123,7 @@ struct HelpQuestion: Identifiable {
 
     When a side runs out of room, App menus put their last menus behind **»**, and other widgets move behind a **⋯** button on that side; click it to reach them. Give a widget a higher `priority` to keep it on the bar longer.
 
-    The **Notch** theme draws a black bar that blends into the notch. See [Displays and notch placement](layout.md#displays-and-notch-placement).
+    The **Notch** theme in the Store draws a black bar that blends into the notch. See [Displays and notch placement](layout.md#displays-and-notch-placement).
 
     ## How do I add a widget that runs my own script?
 
@@ -156,7 +157,7 @@ struct HelpQuestion: Identifiable {
 
     To get betas, set the update track to **Beta** in **Settings → General → Updates**. You then get betas of the next version and stable releases, whichever is newer. Going back to **Stable** keeps your beta until a newer stable release is out.
 
-    Builds you make yourself, and releases not signed with a Developer ID, don't update themselves; get new versions from the [releases page](https://github.com/Seb-GRAF/StableBar/releases). See [Updates](getting-started.md#updates).
+    Builds you make yourself, and releases not signed with a Developer ID, don't update themselves; get new versions from the [releases page](https://github.com/stablebox/StableBar/releases). See [Updates](getting-started.md#updates).
 
     ## What do I do when StableBar crashes or something goes wrong?
 
@@ -182,7 +183,7 @@ struct HelpQuestion: Identifiable {
 
     Your `~/.config/stablebar` folder, with your configuration, scripts and packages, stays unless you check **Also move ~/.config/stablebar to the Trash**.
 
-    If Homebrew installed StableBar, run **Uninstall** first and click **Quit StableBar**, then run `brew uninstall --cask stablebar`; `brew uninstall --zap --cask stablebar` does both and also deletes `~/.config/stablebar`. See [Uninstall](getting-started.md#uninstall).
+    If Homebrew installed StableBar, `brew uninstall --cask stablebar` does the same, and `brew uninstall --zap --cask stablebar` also moves `~/.config/stablebar` to the Trash. An install from before StableBar 0.19.0 needs `brew update` and then `brew reinstall --cask stablebox/tap/stablebar` first. See [Uninstall](getting-started.md#uninstall).
 
     """#
 }

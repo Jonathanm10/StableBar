@@ -16,8 +16,13 @@
       "type": "array",
       "items": { "type": "string" }
     },
+    "packageOrigins": {
+      "description": "Why packages, by their path in packages, were installed from no source, as Settings and the Store show it: saved with Save as Theme, from a theme link, or the look of a bar link. The others came from a folder.",
+      "type": "object",
+      "additionalProperties": { "enum": ["saved", "themeLink", "barLink"] }
+    },
     "outputs": {
-      "description": "Script outputs by widget id or provider name: an object as a script prints it, or plain text.",
+      "description": "Script outputs by widget id or provider name: an object as a script prints it, or plain text. A provider no widget shows, such as the microphone or nowPlaying behind the Sound details, takes the output under its name.",
       "type": "object",
       "additionalProperties": { "type": ["object", "string"] }
     },
@@ -25,6 +30,41 @@
       "description": "Graph samples by widget id or provider name.",
       "type": "object",
       "additionalProperties": { "type": "array", "items": { "type": "number" } }
+    },
+    "mixer": {
+      "description": "The Sound details' mixer, as on a Mac where these regular apps talk to CoreAudio, with System Audio Recording allowed.",
+      "type": "object",
+      "required": ["apps", "outputs"],
+      "additionalProperties": false,
+      "properties": {
+        "apps": {
+          "description": "The apps, each with its own volume, mute and output device UID when it has one, and whether it plays now.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "name"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "volume": { "type": "number", "minimum": 0, "maximum": 1 },
+              "muted": { "type": "boolean" },
+              "output": { "type": "string" },
+              "playing": { "type": "boolean" }
+            }
+          }
+        },
+        "outputs": {
+          "description": "The output devices, the first being the default.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["uid", "name"],
+            "additionalProperties": false,
+            "properties": { "uid": { "type": "string" }, "name": { "type": "string" } }
+          }
+        }
+      }
     },
     "workspaces": {
       "description": "AeroSpace's list-workspaces --json objects.",
@@ -92,7 +132,7 @@
       "description": "What to draw. `update` draws the update popup for a sample offer, with the request for a star on GitHub. `setup` draws a step of setup's tour, 1512 by 982 points by default, with the bar above it as the configuration has it: setup's choices show in the tour, not on the bar, since previewing them would start the commands of the widgets they add. `accessibilityGuide` draws the panel that asks people to drag StableBar into the Accessibility list in System Settings. `share` draws Share My Bar for a 1512 by 982 point screen with the setup tour's wallpaper, at Bar only, and `shareLink` the same with What it shares open. `barLinkReview` draws the Store's review of the packages that barLink's ticked widgets need, as Use this bar opens it.",
       "enum": ["bar", "editBar", "popup", "settings", "uninstall", "update", "setup", "accessibilityGuide", "share", "shareLink", "barLinkReview"]
     },
-    "widget": { "description": "The widget whose popup or Settings page to draw. With `bar`, the bar is drawn with that widget's popup open, below the bar or above a bar at the bottom.", "type": "string" },
+    "widget": { "description": "The widget whose popup or Settings page to draw. With `bar`, the bar is drawn with that widget's popup open, below the bar or above a bar at the bottom, or, for a widget without a popup that has hover controls, those controls in their tooltip.", "type": "string" },
     "group": { "description": "For `settings`, without `widget`: the group whose page Settings → Bar draws, with its widgets listed under it.", "type": "string" },
     "view": { "description": "For `popup`: the view of the widget's popup to draw in place of its layout, under its back arrow.", "type": "string" },
     "section": {
@@ -103,7 +143,7 @@
     "themeLink": { "description": "A theme folder relative to this file, opened as a link on Settings Theme. Requires draw settings and section theme, without a widget.", "type": "string" },
     "barLink": { "description": "A bar link's JSON payload relative to this file, opened as a link on Settings Theme. Requires draw settings and section theme, without a widget, or draw barLinkReview.", "type": "string" },
     "untickedWidgets": { "description": "With barLink, the IDs of the link's widgets that its card shows unticked.", "type": "array", "items": { "type": "string" } },
-    "tab": { "description": "The tab of the widget's Settings page: content, style or behavior. With section bar and no widget, the tab of the bar's settings: size, look or placement.", "enum": ["content", "style", "behavior", "size", "look", "placement"] },
+    "tab": { "description": "The tab of the widget's Settings page: content, style or behavior. With section bar and no widget, the tab of the bar's settings: look or placement.", "enum": ["content", "style", "behavior", "look", "placement"] },
     "uninstall": {
       "description": "What the Uninstall sheet shows for a sample Mac: its confirmation, or the steps that failed before StableBar quits. The confirmation by default.",
       "enum": ["confirm", "failed"]
@@ -117,21 +157,13 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "workspaceCheck": {
-          "description": "A canned result for Finishing touches when the configuration has yabai or OmniWM Workspaces. Never contacts a window manager; defaults to signalsMissing for yabai and ipcOff for OmniWM.",
-          "enum": ["connected", "signalsMissing", "reloadYabai", "ipcOff", "couldntCheck"]
-        },
         "step": {
-          "description": "The step of the tour: where the bar goes, its look, the finishing touches, the permissions, or Try your bar. placement by default.",
-          "enum": ["placement", "look", "touches", "permissions", "tryIt"]
-        },
-        "placement": {
-          "description": "The first step's choice, made before drawing: Replace the menu bar (top), Keep the menu bar (belowMenuBar) or Put it at the bottom (bottom). Without it, none is picked.",
-          "enum": ["top", "belowMenuBar", "bottom"]
+          "description": "The step of the tour: the intro once it has settled, Make it yours, Allow what your bar needs, or You're all set. From allow on, Automation's Allow has made the bar the menu bar, or put it below the menu bar when automation is false, unless automationAsked is false. intro by default.",
+          "enum": ["intro", "choose", "allow", "done"]
         },
         "preset": {
-          "description": "The preset picked on the second step.",
-          "enum": ["minimal", "developer", "workday", "notch", "everything"]
+          "description": "The preset picked on Make it yours.",
+          "enum": ["everyday", "minimal", "developer", "workday", "dashboard"]
         },
         "menuBarHides": {
           "description": "Whether macOS hides its menu bar automatically. false by default.",
@@ -145,6 +177,10 @@
           "description": "Whether macOS lets StableBar control System Events, which hiding or showing the menu bar needs. true by default.",
           "type": "boolean"
         },
+        "automationAsked": {
+          "description": "Whether Automation's Allow has been clicked on Allow what your bar needs. With false and a menu bar that shows, the bar waits on the stage above the card. true by default.",
+          "type": "boolean"
+        },
         "calendars": {
           "description": "Whether macOS allows StableBar full Calendar access. true by default.",
           "type": "boolean"
@@ -153,16 +189,29 @@
           "description": "Whether the Mac has an internal battery, which presets add Battery for. true by default.",
           "type": "boolean"
         },
-        "notch": {
-          "description": "Whether any connected display has a notch, which the Notch preset needs. true by default.",
-          "type": "boolean"
-        },
         "inApplications": {
           "description": "Whether StableBar runs from an Applications folder, which Open at login needs. true by default.",
           "type": "boolean"
         },
         "suggested": {
-          "description": "Store index entries the look step shows under Found on your Mac, as if the Mac had their tools. None by default; the Store's index is never downloaded.",
+          "description": "Store index entries Make it yours shows under Found on your Mac, as if the Mac had their tools. None by default; the Store's index is never downloaded.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "name", "version", "archive", "sha256"],
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "version": { "type": "string" },
+              "description": { "type": "string" },
+              "symbol": { "type": "string" },
+              "archive": { "type": "string" },
+              "sha256": { "type": "string" }
+            }
+          }
+        },
+        "storeWidgets": {
+          "description": "Store index entries for the widgets presets can add, as if the Store listed them for this Mac; presets draw them with their symbol. Without it, the Store can't be reached and presets leave out their Store widgets. The Store's index is never downloaded.",
           "type": "array",
           "items": {
             "type": "object",
@@ -185,12 +234,22 @@
       "enum": ["ready", "replace", "useExisting", "failed", "moving", "setupOpen"]
     },
     "windowsUnderBar": {
-      "description": "Draw setup's last step or Settings General as if this window manager ran and left a window under the bar, with the warning and the gap it needs for the scene's bar. Drawing never reads this Mac's windows.",
+      "description": "Draw Settings General, or setup's Allow card, as if this window manager ran and left a window under the bar, with the warning and the gap it needs for the scene's bar. Drawing never reads this Mac's windows.",
       "enum": ["aerospace", "yabai", "omniwm"]
+    },
+    "workspaceManagers": {
+      "description": "The window managers Settings General finds on this Mac, whatever the Mac that draws has. Every one by default. macOS Spaces is always listed.",
+      "type": "array",
+      "items": { "enum": ["aerospace", "yabai", "omniwm", "rift", "kiwidesk"] },
+      "uniqueItems": true
     },
     "shareScreen": {
       "description": "For `share` and `shareLink`: the screen Share My Bar draws the bar on. `this` is the scene's 1512 by 982 point screen without a notch, and `air13`, `pro14` and `pro16` a 13-inch MacBook Air, 14-inch and 16-inch MacBook Pro at their default sizes, with the notch. this by default.",
       "enum": ["this", "air13", "pro14", "pro16"]
+    },
+    "sharePreset": {
+      "description": "For `share` and `shareLink`: the shape of the image Share My Bar draws. `bar` is the bar alone on a strip of wallpaper, and `landscape`, `square` and `portrait` are 16:9, 1:1 and 4:5. bar by default.",
+      "enum": ["bar", "landscape", "square", "portrait"]
     },
     "macOSMajorVersion": {
       "description": "The macOS major version for feature availability in setup and Settings. 26 by default, independently of the Mac that draws.",
@@ -210,6 +269,7 @@
       "items": { "enum": ["increaseContrast", "reduceTransparency"] },
       "uniqueItems": true
     },
+    "wallpaper": { "description": "For `bar` and `popup`: an image relative to this file, drawn behind the bar or popup in place of the setup tour's wallpaper, scaled to fill and aligned to the top. For `settings` and `setup`: the Mac's wallpaper, which the previews of the bar show in place of the drawn backdrop.", "type": "string" },
     "width": { "description": "The image's width in points.", "type": "number", "minimum": 100, "maximum": 4000 },
     "height": { "description": "The image's height in points.", "type": "number", "minimum": 20, "maximum": 4000 }
   }

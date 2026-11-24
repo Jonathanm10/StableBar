@@ -40,7 +40,7 @@ struct GeneralSettingsView: View {
                             set: { editor.change(ConfigurationEdit(action: .bar, properties: $0)) },
                             unset: { editor.change(ConfigurationEdit(action: .unset, properties: ["bar": .object($0)])) })
                         bar.toggle("Keep windows clear of the bar", "keepWindowsClear", default: false,
-                                   hint: "Moves ordinary windows out from under the bar. Leave it off when AeroSpace, yabai, OmniWM or Rift sets gaps.")
+                                   hint: "Moves ordinary windows out from under the bar. Leave it off when AeroSpace, yabai, OmniWM, Rift or KiwiDesk sets gaps.")
                         if let managerGap {
                             HStack(spacing: 8) {
                                 Label("\(managerGap.warning) \(managerGap.setting)", systemImage: "exclamationmark.triangle.fill")
@@ -69,24 +69,20 @@ struct GeneralSettingsView: View {
                                    hint: "Hovering a slider widget, such as Sound, widens it in the bar instead of opening a tooltip.")
                     }
                     .id(SettingsSearchResult.hover.id)
+                    SettingsGroup("Animation") {
+                        let bar = StyleFields(store: store, path: "bar",
+                            values: (try? store.effectiveDocument["bar"]?.decoded([String: ConfigurationValue].self)) ?? [:],
+                            set: { editor.change(ConfigurationEdit(action: .bar, properties: $0)) },
+                            unset: { editor.change(ConfigurationEdit(action: .unset, properties: ["bar": .object($0)])) })
+                        let motion = (try? bar.values["motion"]?.decoded(BarMotion.self)) ?? .smooth
+                        bar.choice("Motion", "motion", choices: BarMotion.allCases.map(\.rawValue), default: BarMotion.smooth.rawValue)
+                        bar.choice("Popups", "popupTransition", choices: PopupTransition.allCases.map(\.rawValue), default: motion.popupTransition.rawValue)
+                        bar.toggle("Morph between popups", "morphPopups", default: true,
+                                   hint: "Opening another widget's popup or tooltip moves the open one into it.")
+                    }
+                    .id(SettingsSearchResult.animation.id)
                     SettingsGroup("Workspaces") {
-                        let source = store.configuration?.workspaceSource ?? .aerospace
-                        let path = shellEnvironment.withLock { $0["PATH", default: ""] }
-                        let missing = [WorkspaceSource.aerospace, .yabai, .omniwm, .rift].filter { $0.executable(path: path) == nil }
-                        SettingRow(title: "Workspace manager", hint: missing.isEmpty ? nil : "Not installed: \(missing.map(\.title).joined(separator: ", ")).") {
-                            SettingsSegments(selection: Binding(get: { source }, set: {
-                                if $0 != source { editor.change(ConfigurationEdit(action: .workspaceSource, name: $0.rawValue)) }
-                            }), options: [(WorkspaceSource.aerospace, "AeroSpace"), (.yabai, "yabai"), (.omniwm, "OmniWM"), (.rift, "Rift"), (.spaces, "Spaces")],
-                               disabled: missing, stretches: false)
-                            .fixedSize()
-                        }
-                        if missing.contains(source) {
-                            Label("\(source.title) isn't installed, so workspace widgets can't show its workspaces. Install it, or choose Spaces.",
-                                  systemImage: "exclamationmark.triangle.fill")
-                                .font(.callout)
-                                .foregroundStyle(SettingsPalette.warning)
-                                .groupRow()
-                        }
+                        WorkspaceManagerSettings(editor: editor)
                         connection
                     }
                     .id(SettingsSearchResult.workspaces.id)

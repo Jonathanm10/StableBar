@@ -8,11 +8,11 @@ struct SceneFile: Decodable {
     enum Appearance: String, Decodable, CaseIterable { case dark, light }
     /// A Settings section, named as the toolbar names it, `feedback` for Send feedback in Help, or `crashes` for Crashes in Status.
     enum Section: String, Decodable, CaseIterable { case general, bar, theme, profiles, packages, help, feedback, crashes }
-    /// A tab of a widget's Settings page (content, style, behavior), or of the bar's in the Bar section (size, look, placement).
+    /// A tab of a widget's Settings page (content, style, behavior), or of the bar's in the Bar section (look, placement).
     enum Tab: String, Decodable, CaseIterable {
-        case content, style, behavior, size, look, placement
+        case content, style, behavior, look, placement
 
-        var isBarTab: Bool { [.size, .look, .placement].contains(self) }
+        var isBarTab: Bool { [.look, .placement].contains(self) }
     }
     /// The Uninstall sheet's confirmation, or the steps that failed before StableBar quits.
     enum Uninstall: String, Decodable, CaseIterable { case confirm, failed }
@@ -38,6 +38,8 @@ struct SceneFile: Decodable {
     /// scene's work folder. With `barLink` or `shareLink`, they're installed from the Store, and with `barLink` the Store
     /// lists them.
     var packages: [String] = []
+    /// Why packages, by their path in `packages`, were installed from no source; the others came from a folder.
+    var packageOrigins: [String: PackageInstallRecord.Origin] = [:]
     /// Script outputs keyed by widget id or provider name: an object as a script prints it, or plain text.
     var outputs: [String: ConfigurationValue] = [:]
     /// Graph samples keyed by widget id or provider name.
@@ -62,6 +64,8 @@ struct SceneFile: Decodable {
     var activeApp: String?
     /// The menu a popup scene shows in place of the widget's popup, as an app menu widget opens one.
     var menu: [MenuItem]?
+    /// The Sound details' mixer, as on a Mac where its apps play.
+    var mixer: Mixer?
     var draw: Draw
     /// The widget whose popup or Settings page to draw, or whose popup the bar shows open.
     var widget: String?
@@ -90,31 +94,37 @@ struct SceneFile: Decodable {
     /// A move row outside Applications, for setup or Settings → General.
     var applicationMove: ApplicationMove?
     enum ApplicationMove: String, Decodable, CaseIterable { case ready, replace, useExisting, failed, moving, setupOpen }
-    /// The window manager whose windows start under the bar, which setup's last step and Settings → General warn about.
+    /// The window manager whose windows start under the bar, which Settings → General warns about.
     var windowsUnderBar: WorkspaceSource?
+    /// The window managers Settings General finds; every one when nil, whatever the Mac that draws has.
+    var workspaceManagers: [WorkspaceSource]?
     /// The screen Share My Bar draws the bar on.
     var shareScreen = BarShareScreen.this
+    /// The shape of the image Share My Bar draws.
+    var sharePreset = BarSharePreset.bar
     /// The macOS version for feature availability in setup and Settings, pinned independently of the render host.
     var macOSMajorVersion = 26
     var appearances: [Appearance] = Appearance.allCases
     /// The Accessibility display settings a bar or popup scene draws with, all off by default, whatever the Mac that draws has.
     var accessibilityDisplay: [AccessibilityDisplay] = []
+    /// An image, relative to the scene file, drawn behind the bar or popup in place of the setup tour's wallpaper, or
+    /// behind the previews of the bar in Settings and setup as the Mac's wallpaper.
+    var wallpaper: String?
     var width: Double?
     var height: Double?
 
     enum CodingKeys: String, CodingKey, CaseIterable {
-        case configuration, packages, outputs, history, workspaces, windows, yabaiSpaces, yabaiWindows, yabaiApps, focusedWindow, dockBadges, desktopShortcuts, activeApp, menu, draw, widget, group, view, section, tab, package, uninstall,
-             themeLink, barLink, untickedWidgets, starRequest, setup, applicationMove, windowsUnderBar, shareScreen, macOSMajorVersion, appearances,
-             accessibilityDisplay, width, height
+        case configuration, packages, packageOrigins, outputs, history, workspaces, windows, yabaiSpaces, yabaiWindows, yabaiApps, focusedWindow, dockBadges, desktopShortcuts, activeApp, menu, mixer, draw, widget, group, view, section, tab, package, uninstall,
+             themeLink, barLink, untickedWidgets, starRequest, setup, applicationMove, windowsUnderBar, workspaceManagers, shareScreen, sharePreset, macOSMajorVersion, appearances,
+             accessibilityDisplay, wallpaper, width, height
     }
 
     /// A step of setup's tour, the choices made before it, and what setup reads from the Mac, pinned so a drawing
     /// doesn't depend on the Mac that draws it.
     struct Setup: Equatable {
-        var step = SetupSession.Step.placement
-        /// The first step's choice, made before drawing; none leaves both choices unpicked.
-        var placement: SetupPreferences.Placement?
-        /// The preset picked on the second step.
+        /// The step the tour shows.
+        var step = SetupSession.Step.intro
+        /// The preset picked on Make it yours.
         var preset: SetupPreferences.Preset?
         /// Whether macOS hides its menu bar automatically.
         var menuBarHides = false
@@ -122,29 +132,51 @@ struct SceneFile: Decodable {
         var accessibility = true
         var automation = true
         var calendars = true
+        /// Whether Automation's Allow has been clicked on Allow; until then the bar waits on the stage. Once clicked, the
+        /// bar is the menu bar, or sits below it when `automation` is false.
+        var automationAsked = true
         /// Whether the Mac has an internal battery, which presets add Battery for.
         var battery = true
-        /// Whether any connected display has a notch, which the Notch preset needs.
-        var notch = true
         /// Whether StableBar runs from an Applications folder, which Open at login needs.
         var inApplications = true
-        /// A canned connection result; drawing setup never queries a window manager or reads its config.
-        var workspaceCheck: WorkspaceCheck?
-        /// Store entries the look step shows under Found on your Mac, as if the Mac had their tools.
+        /// Store entries Make it yours shows under Found on your Mac, as if the Mac had their tools.
         var suggested: [PackageIndex.Entry] = []
+        /// The Store's widgets presets can add, as if the Store listed them; without them, the Store can't be reached.
+        var storeWidgets: [PackageIndex.Entry]?
+    }
 
-        enum WorkspaceCheck: String, Decodable, CaseIterable {
-            case connected, signalsMissing, reloadYabai, ipcOff, couldntCheck
+    /// Regular apps that talk to CoreAudio, each with its own choice and whether it plays, and the output devices, the
+    /// first being the default.
+    struct Mixer: Equatable {
+        struct App: Equatable {
+            var id: String
+            var name: String
+            var volume: Double?
+            var muted: Bool?
+            var output: String?
+            var playing: Bool?
+        }
 
-            var result: SetupWorkspaceResult {
-                switch self {
-                case .connected: .connected
-                case .signalsMissing: .signalsMissing(configuration: "~/.yabairc")
-                case .reloadYabai: .reloadYabai(configuration: "~/.yabairc")
-                case .ipcOff: .ipcOff
-                case .couldntCheck: .couldntCheck("Couldn’t check just now. Check that your window manager is running, then try again.")
-                }
-            }
+        struct Output: Equatable {
+            var uid: String
+            var name: String
+        }
+
+        var apps: [App]
+        var outputs: [Output]
+
+        /// The mixer's state with these apps running and System Audio Recording allowed.
+        var state: MixerState {
+            var state = MixerState(settings: Dictionary(uniqueKeysWithValues: apps.compactMap { app in
+                let setting = MixerState.Setting(volume: app.volume ?? 1, muted: app.muted ?? false, output: app.output)
+                return setting.isDefault ? nil : (app.id, setting)
+            }))
+            _ = state.handle(.outputsChanged(outputs.map { MixerState.Output(uid: $0.uid, name: $0.name) }, defaultOutput: outputs.first?.uid))
+            _ = state.handle(.processesChanged(apps.enumerated().map { MixerState.Client(object: UInt32($0.offset), bundleID: $0.element.id,
+                                                                                         name: $0.element.name, playing: $0.element.playing ?? false) },
+                                               apps: Dictionary(uniqueKeysWithValues: apps.map { ($0.id, $0.name) })))
+            _ = state.handle(.permissionChecked(.allowed))
+            return state
         }
     }
 
@@ -176,6 +208,7 @@ struct SceneFile: Decodable {
         if !packages.isEmpty, case .file = configuration {
             throw DecodingError.dataCorruptedError(forKey: .packages, in: values, debugDescription: "A scene with packages gives its configuration inline.")
         }
+        packageOrigins = try values.decodeIfPresent([String: PackageInstallRecord.Origin].self, forKey: .packageOrigins) ?? [:]
         outputs = try values.decodeIfPresent([String: ConfigurationValue].self, forKey: .outputs) ?? [:]
         history = try values.decodeIfPresent([String: [Double]].self, forKey: .history) ?? [:]
         workspaces = try values.decodeIfPresent([ConfigurationValue].self, forKey: .workspaces)
@@ -192,6 +225,7 @@ struct SceneFile: Decodable {
         focusedWindow = try values.decodeIfPresent(Int.self, forKey: .focusedWindow)
         activeApp = try values.decodeIfPresent(String.self, forKey: .activeApp)
         menu = try values.decodeIfPresent([MenuItem].self, forKey: .menu)
+        mixer = try values.decodeIfPresent(Mixer.self, forKey: .mixer)
         draw = try values.decode(Draw.self, forKey: .draw)
         widget = try values.decodeIfPresent(String.self, forKey: .widget)
         group = try values.decodeIfPresent(String.self, forKey: .group)
@@ -216,13 +250,28 @@ struct SceneFile: Decodable {
                 debugDescription: "A setup scene draws applicationMove only with setup.inApplications false.")
         }
         windowsUnderBar = try values.decodeIfPresent(WorkspaceSource.self, forKey: .windowsUnderBar)
-        if windowsUnderBar != nil, draw != .setup && !(draw == .settings && section == .general) {
+        if windowsUnderBar != nil, !(draw == .settings && section == .general || draw == .setup) {
             throw DecodingError.dataCorruptedError(forKey: .windowsUnderBar, in: values,
-                debugDescription: "windowsUnderBar draws setup or Settings General.")
+                debugDescription: "windowsUnderBar draws Settings General or setup.")
+        }
+        workspaceManagers = try values.decodeIfPresent([WorkspaceSource].self, forKey: .workspaceManagers)
+        if let workspaceManagers {
+            if draw != .settings || section != .general || widget != nil {
+                throw DecodingError.dataCorruptedError(forKey: .workspaceManagers, in: values,
+                    debugDescription: "workspaceManagers draws Settings General.")
+            }
+            if workspaceManagers.contains(.spaces) {
+                throw DecodingError.dataCorruptedError(forKey: .workspaceManagers, in: values,
+                    debugDescription: "workspaceManagers lists window managers; macOS Spaces is always listed.")
+            }
         }
         shareScreen = try values.decodeIfPresent(BarShareScreen.self, forKey: .shareScreen) ?? .this
         if values.contains(.shareScreen), draw != .share && draw != .shareLink {
             throw DecodingError.dataCorruptedError(forKey: .shareScreen, in: values, debugDescription: "shareScreen draws share or shareLink.")
+        }
+        sharePreset = try values.decodeIfPresent(BarSharePreset.self, forKey: .sharePreset) ?? .bar
+        if values.contains(.sharePreset), draw != .share && draw != .shareLink {
+            throw DecodingError.dataCorruptedError(forKey: .sharePreset, in: values, debugDescription: "sharePreset draws share or shareLink.")
         }
         macOSMajorVersion = try values.decodeIfPresent(Int.self, forKey: .macOSMajorVersion) ?? 26
         if macOSMajorVersion < 14 {
@@ -235,6 +284,7 @@ struct SceneFile: Decodable {
                                                    debugDescription: "Appearances name dark, light or both, each once.")
         }
         accessibilityDisplay = try values.decodeIfPresent([AccessibilityDisplay].self, forKey: .accessibilityDisplay) ?? []
+        wallpaper = try values.decodeIfPresent(String.self, forKey: .wallpaper)
         width = try values.decodeIfPresent(Double.self, forKey: .width)
         height = try values.decodeIfPresent(Double.self, forKey: .height)
         if let width, !(100...4000).contains(width) {
@@ -291,6 +341,10 @@ struct SceneFile: Decodable {
             throw DecodingError.dataCorruptedError(forKey: .accessibilityDisplay, in: values,
                                                    debugDescription: "accessibilityDisplay belongs to a bar or popup scene.")
         }
+        if wallpaper != nil, ![.bar, .popup, .settings, .setup].contains(draw) {
+            throw DecodingError.dataCorruptedError(forKey: .wallpaper, in: values,
+                                                   debugDescription: "wallpaper belongs to a bar, popup, settings or setup scene.")
+        }
         if let tab, tab.isBarTab, widget != nil || section != .bar {
             throw DecodingError.dataCorruptedError(forKey: .tab, in: values,
                                                    debugDescription: "\(tab.rawValue) is a tab of the bar's settings, in the bar section without a widget.")
@@ -307,11 +361,11 @@ struct SceneFile: Decodable {
 
 extension SceneFile.Setup: Decodable {
     enum CodingKeys: String, CodingKey, CaseIterable {
-        case step, placement, preset, menuBarHides, accessibility, automation, calendars, battery, notch, inApplications, workspaceCheck,
-             suggested
+        case step, preset, menuBarHides, accessibility, automation, automationAsked, calendars, battery, inApplications, suggested,
+             storeWidgets
     }
 
-    /// Steps, placements and presets go by the names the app gives them, such as `tryIt` or `belowMenuBar`.
+    /// Steps and presets go by the names the app gives them, such as `allow` or `workday`.
     init(from decoder: Decoder) throws {
         try decoder.rejectUnknownKeys(CodingKeys.self)
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -323,18 +377,57 @@ extension SceneFile.Setup: Decodable {
             }
             return value
         }
-        step = try named(.step, among: SetupSession.Step.allCases) ?? .placement
-        placement = try named(.placement, among: [SetupPreferences.Placement.top, .belowMenuBar, .bottom])
+        step = try named(.step, among: SetupSession.Step.allCases) ?? .intro
         preset = try named(.preset, among: SetupPreferences.Preset.allCases)
         menuBarHides = try values.decodeIfPresent(Bool.self, forKey: .menuBarHides) ?? false
         accessibility = try values.decodeIfPresent(Bool.self, forKey: .accessibility) ?? true
         automation = try values.decodeIfPresent(Bool.self, forKey: .automation) ?? true
+        automationAsked = try values.decodeIfPresent(Bool.self, forKey: .automationAsked) ?? true
         calendars = try values.decodeIfPresent(Bool.self, forKey: .calendars) ?? true
         battery = try values.decodeIfPresent(Bool.self, forKey: .battery) ?? true
-        notch = try values.decodeIfPresent(Bool.self, forKey: .notch) ?? true
         inApplications = try values.decodeIfPresent(Bool.self, forKey: .inApplications) ?? true
-        workspaceCheck = try values.decodeIfPresent(WorkspaceCheck.self, forKey: .workspaceCheck)
         suggested = try values.decodeIfPresent([PackageIndex.Entry].self, forKey: .suggested) ?? []
+        storeWidgets = try values.decodeIfPresent([PackageIndex.Entry].self, forKey: .storeWidgets)
+    }
+}
+
+extension SceneFile.Mixer: Decodable {
+    enum CodingKeys: String, CodingKey, CaseIterable { case apps, outputs }
+
+    init(from decoder: Decoder) throws {
+        try decoder.rejectUnknownKeys(CodingKeys.self)
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        apps = try values.decode([App].self, forKey: .apps)
+        outputs = try values.decode([Output].self, forKey: .outputs)
+        if Set(apps.map(\.id)).count != apps.count {
+            throw DecodingError.dataCorruptedError(forKey: .apps, in: values, debugDescription: "The mixer names each app once.")
+        }
+    }
+}
+
+extension SceneFile.Mixer.App: Decodable {
+    enum CodingKeys: String, CodingKey, CaseIterable { case id, name, volume, muted, output, playing }
+
+    init(from decoder: Decoder) throws {
+        try decoder.rejectUnknownKeys(CodingKeys.self)
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        name = try values.decode(String.self, forKey: .name)
+        volume = try values.decodeIfPresent(Double.self, forKey: .volume)
+        muted = try values.decodeIfPresent(Bool.self, forKey: .muted)
+        output = try values.decodeIfPresent(String.self, forKey: .output)
+        playing = try values.decodeIfPresent(Bool.self, forKey: .playing)
+    }
+}
+
+extension SceneFile.Mixer.Output: Decodable {
+    enum CodingKeys: String, CodingKey, CaseIterable { case uid, name }
+
+    init(from decoder: Decoder) throws {
+        try decoder.rejectUnknownKeys(CodingKeys.self)
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        uid = try values.decode(String.self, forKey: .uid)
+        name = try values.decode(String.self, forKey: .name)
     }
 }
 

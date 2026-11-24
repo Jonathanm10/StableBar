@@ -65,7 +65,6 @@ private func largestWindow(of pid: pid_t) -> CGRect? {
 }
 
 struct AccessibilityGuideView: View {
-    var icon: NSImage = NSApp.applicationIconImage
     let close: () -> Void
 
     var body: some View {
@@ -78,7 +77,7 @@ struct AccessibilityGuideView: View {
                     .accessibilityLabel("Close")
             }
             HStack(spacing: 8) {
-                Image(nsImage: icon).resizable().frame(width: 24, height: 24)
+                Image(nsImage: StableBarIcon.image).resizable().frame(width: 24, height: 24)
                 Text("StableBar")
                 Spacer()
             }
@@ -110,7 +109,7 @@ private final class AppBundleDragView: NSView, NSDraggingSource {
     override func mouseDown(with event: NSEvent) {
         let item = NSDraggingItem(pasteboardWriter: Bundle.main.bundleURL as NSURL)
         let point = convert(event.locationInWindow, from: nil)
-        item.setDraggingFrame(NSRect(x: point.x - 16, y: point.y - 16, width: 32, height: 32), contents: NSApp.applicationIconImage)
+        item.setDraggingFrame(NSRect(x: point.x - 16, y: point.y - 16, width: 32, height: 32), contents: StableBarIcon.image)
         beginDraggingSession(with: [item], event: event, source: self)
     }
 

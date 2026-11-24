@@ -177,6 +177,13 @@ test("preview geometry follows the theme", () => {
   assert.equal(indicatorClass(resolveTheme(builtIn, theme("leman"), "dark")), "preview-ws-fill");
   assert.equal(indicatorClass(resolveTheme(builtIn, theme("nord"), "dark")), "preview-ws-under");
   assert.equal(indicatorClass(resolveTheme(builtIn, theme("notch"), "dark")), "preview-ws-text");
+  const cells = resolveTheme(builtIn, { workspaceDefaults: { indicator: "cells" } }, "dark");
+  assert.equal(indicatorClass(cells), "preview-ws-cells");
+  assert.equal(cssVariables(cells)["--ws-ind"], "transparent");
+  assert.equal(cssVariables(cells)["--ws-cell"], "transparent");
+  const dots = resolveTheme(builtIn, { workspaceDefaults: { indicator: "cells", style: { background: "#8e8e9380" } } }, "dark");
+  assert.equal(cssVariables(dots)["--ws-ind"], "#8e8e9380");
+  assert.equal(cssVariables(dots)["--ws-cell"], "#8e8e9380");
 });
 
 test("affected variables follow geometry controls without unrelated variables", () => {
@@ -247,6 +254,8 @@ test("every preview variable has a target in the preview markup", () => {
   const page = read("site/creator/page.mjs").toString();
   const markup = page.slice(page.indexOf("function previewHTML()"), page.indexOf("function render()"));
   const classes = [...markup.matchAll(/class="([^"]+)"/g)].map(([, value]) => new Set(value.split(/\s+/)));
+  classes.find(tokens => tokens.has("theme-preview"))
+    .add(indicatorClass(resolveTheme(builtIn, { workspaceDefaults: { indicator: "cells" } }, "dark")));
   for (const id of baseIDs) {
     for (const appearance of ["light", "dark"]) {
       const resolved = resolveTheme(builtIn, theme(id), appearance);
@@ -337,6 +346,7 @@ test("every non-token contract path feeds the renderer", () => {
     "workspaceDefaults.appStyle.width": 23, "workspaceDefaults.appStyle.height": 21,
     "workspaceDefaults.style.states.focused.foreground": "#123456",
     "workspaceDefaults.style.states.focused.background": "#123456", "workspaceDefaults.style.cornerRadius": 4,
+    "workspaceDefaults.style.background": "#123456",
     "workspaceDefaults.indicatorStyle.width": 20, "workspaceDefaults.indicatorStyle.height": 4,
     "workspaceDefaults.indicatorStyle.cornerRadius": 2, "workspaceDefaults.indicatorStyle.offsetY": 6,
     "workspaceDefaults.indicatorStyle.background": "#123456",
@@ -552,7 +562,7 @@ test("reserved ids are the app's", () => {
   const legacy = catalog.match(/let legacyThemeIDs: Set<String> = \[([^\]]+)\]/)[1];
   const legacyIDs = [...legacy.matchAll(/"([^"]+)"/g)].map(match => match[1]);
   assert.deepEqual(BASE_IDS, baseIDs);
-  assert.deepEqual(RESERVED_IDS, new Set([...folders, ...legacyIDs]));
+  assert.deepEqual(RESERVED_IDS, new Set([...folders, ...legacyIDs, "classic"]));
 });
 
 test("site theme copies equal Resources", () => {
@@ -1074,6 +1084,8 @@ test("workspace controls follow the indicator", () => {
   referenced.config.tokens.indicator = "underline";
   referenced.config.workspaceDefaults.indicator = "@token.indicator";
   assert.ok(idsFor(referenced).includes("workspaces.underlineWidth"));
+  const cells = idsFor(applyControl(state("notch"), "workspaces.indicator", "cells", "dark"));
+  assert.ok(cells.includes("workspaces.focusedFill") && cells.includes("workspaces.cornerRadius"));
 });
 
 test("workspace indicator and its controls write the app's paths", () => {
@@ -1522,6 +1534,7 @@ test("linked bar properties are restricted at the root and in every profile", ()
   const bar = {
     height: 30, margin: 0, inset: 1, spacing: 6, background: "#123456", style: { cornerRadius: 5 },
     notchWidth: 0, notchSpacing: 2, fillNotch: false, popupOffset: 3, glass: { enabled: true, transparency: 0.4 },
+    followsWallpaper: true,
   };
   assert.doesNotThrow(() => encodeLink({ manifestText: "{}", configText: JSON.stringify({ bar }) }));
   for (const value of [{ position: "bottom" }, { hideMenuBar: true }, "@token.bar", "@setting.bar", null, [], 30, true]) {
@@ -1531,6 +1544,19 @@ test("linked bar properties are restricted at the root and in every profile", ()
     rejectsFiles(JSON.stringify({ profiles: [{ name: "p", configuration: {
       profiles: [{ name: "nested", configuration: document }],
     } }] }), "barProperty");
+  }
+});
+
+test("linked bar numbers stay within the app's ranges", () => {
+  const gradient = locations => ({ gradient: { colors: ["#000000", "#ffffff"], locations } });
+  for (const bar of [{ divider: { width: 6 } }, { style: { offsetY: -1000, states: { hover: { borderWidth: 6 } } } },
+    { background: gradient([0, 1]) }, { notchWidth: 1000 }]) {
+    assert.doesNotThrow(() => encodeLink({ manifestText: "{}", configText: JSON.stringify({ bar }) }), JSON.stringify(bar));
+  }
+  for (const bar of [{ divider: { width: 7 } }, { height: 15 }, { style: { states: { hover: { borderWidth: 7 } } } },
+    { background: gradient([0, 1.5]) }, { style: { shadowRadius: 1001 } }]) {
+    rejectsFiles(JSON.stringify({ bar }), "barProperty");
+    rejectsFiles(JSON.stringify({ profiles: [{ name: "p", configuration: { bar } }] }), "barProperty");
   }
 });
 
@@ -1649,7 +1675,7 @@ test("readme rows keep pipes and backslashes verbatim like the Store's script", 
 
 test("store lookup", async () => {
   const { manifest } = json("Tests/Fixtures/theme-link/readme-row.json");
-  const url = "https://raw.githubusercontent.com/Seb-GRAF/stablebar-packages/main/packages/fern/package.json";
+  const url = "https://raw.githubusercontent.com/stablebox/stablebar-packages/main/packages/fern/package.json";
   const response = status => async requested => {
     assert.equal(requested, url);
     return new Response(JSON.stringify(manifest), { status });

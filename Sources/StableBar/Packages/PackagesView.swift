@@ -124,8 +124,10 @@ struct PackagesView: View {
                     for version in library.installed where version.id == manifest.id { await library.uninstall(version) }
                 }
             }
-        } message: { _ in
-            Text("Its files will be deleted and its widgets removed from the bar. Its settings and saved credentials are kept. This cannot be undone.")
+        } message: { manifest in
+            Text(manifest.kind == .theme
+                 ? "Its files will be deleted. A bar that uses it switches to Clear, and a screen that uses it to the bar’s theme, without its settings. This cannot be undone."
+                 : "Its files will be deleted and its widgets removed from the bar. Its settings and saved credentials are kept. This cannot be undone.")
         }
         .sheet(isPresented: $showingSources) { PackageSourcesView(library: library, link: $sourceLink) }
         .onAppear(perform: openPendingSourceLink)
@@ -379,6 +381,10 @@ struct PackagesView: View {
         case let .unlisted(manifest):
             let badge: PackageOrigin? = switch library.origin(of: manifest) {
             case .local?: .local
+            case .saved?: .saved
+            case .themeLink?: .themeLink
+            case .barLink?: .barLink
+            case .retired?: .retired
             case let .privateSource(name)?: .privateSource(name)
             default: nil
             }

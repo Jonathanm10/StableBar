@@ -71,7 +71,8 @@ struct BarEditView: View {
                         }
                         ForEach(units) { unit in
                             let frame = layout.frames[unit.id]!
-                            let lifted = editing.opacity(for: unit.widgets[0].id) == 0
+                            // A pill that takes others can gain a dragged widget while the rest of it stays.
+                            let lifted = unit.widgets.allSatisfy { editing.opacity(for: $0.id, on: display.id) == 0 }
                             let shape = RoundedRectangle(cornerRadius: 6)
                             ZStack {
                                 // Where the dragged widget lands.
@@ -83,6 +84,7 @@ struct BarEditView: View {
                                     ForEach(unit.widgets) { widget in
                                         BarEditTile(store: store, display: display.id, kind: ScreenKind(display),
                                                     entry: entries.first { $0.id == widget.id }!, config: config)
+                                            .opacity(editing.opacity(for: widget.id, on: display.id))
                                     }
                                 }
                                 .fixedSize()
@@ -370,15 +372,6 @@ private struct BarEditSurface {
 /// Above a relative luminance of about 0.24, text contrasts more with a dark surface than a light one.
 private func isLightText(_ rgba: UInt32) -> Bool { luminance(rgba) > 0.24 }
 
-/// WCAG relative luminance of an RGBA color.
-private func luminance(_ rgba: UInt32) -> Double {
-    let channels = [24, 16, 8].map { shift in
-        let value = Double((rgba >> UInt32(shift)) & 0xff) / 255
-        return value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
-    }
-    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
-}
-
 struct BarEditTile: View {
     let store: BarStore
     let display: Int
@@ -464,10 +457,11 @@ struct BarEditTile: View {
         if let group = entry.widget.group {
             Divider()
             Button("Edit Group “\(friendly(group))”…") { editing.editGroup(group) }
+                .disabled(grouping.groups[group] == nil)
             Button("Leave Group") { editing.leaveGroup(entry.id, on: display) }
                 .disabled(!grouping.canLeave(entry.id))
         } else {
-            let choices = grouping.choices(for: entry.id, among: editing.widgets(on: screen))
+            let choices = grouping.choices(for: entry.id, among: editing.widgets(on: screen), groups: store.configuration?.onScreen(kind).groups ?? [:])
             if !choices.isEmpty { Divider() }
             ForEach(choices, id: \.self) { choice in
                 Button(choice.title(names: editing.names)) { editing.group(entry.id, choice, on: display) }

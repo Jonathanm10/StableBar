@@ -3,15 +3,20 @@ import SwiftUI
 
 /// A tooltip's content at the width it needs, up to `maxWidth`, and as tall as its text is once it wraps there.
 struct TooltipWidth: Layout {
+    /// How wide a widget's tooltip grows, its shadow included, before its text wraps.
+    static let widgetMaxWidth: CGFloat = 320
+
     let maxWidth: CGFloat
 
+    // The content can draw nothing, such as the volume slider once its output has no volume.
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let width = min(subviews[0].sizeThatFits(.unspecified).width, maxWidth)
-        return subviews[0].sizeThatFits(ProposedViewSize(width: width, height: nil))
+        guard let content = subviews.first else { return .zero }
+        let width = min(content.sizeThatFits(.unspecified).width, maxWidth)
+        return content.sizeThatFits(ProposedViewSize(width: width, height: nil))
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        subviews[0].place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
+        subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
     }
 }
 
@@ -292,7 +297,7 @@ final class WidgetPopup {
     /// Shows `content` in a tooltip under `anchor`, drawn in the widget's popup style, which opens and closes with the
     /// bar's popup motion.
     private func openTooltip(id: String, style widgetStyle: WidgetStyle, defaults: WidgetStyle, store: BarStore, anchor: NSView,
-                             maxWidth: CGFloat = 320, alignment: PopupAlignment = .center, sidePadding: Double = 10, ignoresMouseEvents: Bool,
+                             maxWidth: CGFloat = TooltipWidth.widgetMaxWidth, alignment: PopupAlignment = .center, sidePadding: Double = 10, ignoresMouseEvents: Bool,
                              @ViewBuilder content: (WidgetStyle) -> some View) {
         let window = anchor.window!
         let screen = window.screen!
@@ -307,7 +312,7 @@ final class WidgetPopup {
         let style = tooltipStyle(defaults: defaults, widget: widgetStyle, states: StyleStates(mode: store.barPresentation.modePresentation(on: kind)),
                                  sidePadding: sidePadding)
         let appearance = WidgetAppearance(style, defaults: WidgetStyle())
-        let shadowInset = CGFloat(appearance.shadowRadius * 2 + 2)
+        let shadowInset = CGFloat(appearance.shadowRadius * 2 + 1 + max(abs(appearance.shadowOffsetX), abs(appearance.shadowOffsetY)))
         let panel = PopupPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         let host = NSHostingView(rootView: TooltipWidth(maxWidth: maxWidth - shadowInset * 2) {
                 content(style)
@@ -367,7 +372,8 @@ final class WidgetPopup {
             if !onHover { closePinned(widget.id) }
             return
         }
-        let window = anchor.window!
+        // A menu bar item's cell can still take a click after its anchor has left the window (#827).
+        guard let window = anchor.window else { return }
         let screen = window.screen!
         let bar = store.configuration!.bar(on: ScreenKind(BarDisplay(screen: screen)))
         let animation = popup.animation ?? bar.motion.popupAnimation
@@ -382,7 +388,7 @@ final class WidgetPopup {
         let upward = bar.position == .bottom
         let style = popup.baseStyle(widget: widget, defaults: defaults)
         let appearance = WidgetAppearance(style, defaults: WidgetStyle())
-        let shadowInset = CGFloat(appearance.shadowRadius * 2 + 2)
+        let shadowInset = CGFloat(appearance.shadowRadius * 2 + 1 + max(abs(appearance.shadowOffsetX), abs(appearance.shadowOffsetY)))
         let width = min(sizes[widget.id]?.width ?? CGFloat(popup.style.width ?? 360), screen.visibleFrame.width - shadowInset * 2 - 16)
         let gap = CGFloat(popup.gap(below: bar, inPopup: parentPopup != nil))
         let maximumHeight = (upward ? screen.visibleFrame.maxY - edge : edge - screen.visibleFrame.minY) - shadowInset * 2 - 8 - gap
@@ -397,11 +403,14 @@ final class WidgetPopup {
                                styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.opensUpward = upward
         let host = NSHostingView(rootView: PopupCanvas(size: panel.size, inset: shadowInset, upward: upward) {
-            PopupView(popup: popup, style: style, store: store, widget: widget, backgrounds: backgrounds, navigation: panel.navigation)
+            PopupView(popup: popup, style: style, store: store, widget: widget, backgrounds: backgrounds, navigation: panel.navigation,
+                      size: panel.size)
                 .environment(\.screenKind, ScreenKind(BarDisplay(screen: screen)))
                 .frame(idealWidth: width, maxWidth: .infinity)
                 .onPreferenceChange(PopupHeightPreference.self) { [weak self, weak panel] contentHeight in
                     guard popup.height == nil, let panel, let self, !self.pins.resized.contains(widget.id) else { return }
+                    let follows = contentHeight <= maximumHeight
+                    if panel.size.followsContent != follows { panel.size.followsContent = follows }
                     let shadow: NSWindow?
                     if panel === self.panel {
                         shadow = self.shadowWindow
@@ -513,6 +522,8 @@ final class WidgetPopup {
             GlassBackground(fill: style.background, glass: glass, surface: \.popups, shape: Rectangle()))), size: union.size)
         let outline = CALayer()
         outline.borderWidth = appearance.borderWidth
+        // The fill's layer, which AppKit adds when the window first draws, would otherwise cover the outline.
+        outline.zPosition = 1
         panel.effectiveAppearance.performAsCurrentDrawingAppearance {
             outline.borderColor = NSColor(appearance.border(increasedContrast: NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast)).cgColor
         }
@@ -640,6 +651,8 @@ final class WidgetPopup {
             return handled ? nil : event
         }
         globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            // Answering a permission prompt the popup asked for, such as System Audio Recording, leaves it open.
+            guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier != AppWatcher.permissionPrompts else { return }
             MainActor.assumeIsolated { self?.close() }
         }
         if pinnable {
@@ -836,7 +849,8 @@ final class WidgetPopup {
         window.appearance = panel.appearance
         window.alphaValue = 0
         let host = NSHostingView(rootView: PopupCanvas(size: panel.size, inset: inset, upward: panel.opensUpward) {
-            PopupShadowView(cornerRadius: appearance.cornerRadius, color: appearance.shadowColor, radius: appearance.shadowRadius, inset: inset)
+            PopupShadowView(cornerRadius: appearance.cornerRadius, color: appearance.shadowColor, radius: appearance.shadowRadius,
+                            x: appearance.shadowOffsetX, y: appearance.shadowOffsetY, inset: inset)
         })
         window.contentView = PopupRevealView(content: host, size: panel.frame.size)
         return window

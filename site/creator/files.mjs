@@ -12,8 +12,25 @@ export const ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
 const themeKeys = new Set(["tokens", "defaults", "popupDefaults", "groupDefaults", "roles", "workspaceDefaults", "bar", "groups", "profiles"]);
 // Keep this list aligned with ThemeLinkCandidate’s appearance-only bar properties.
 const barProperties = new Set([
-  "height", "margin", "inset", "spacing", "background", "style", "notchWidth", "notchSpacing", "fillNotch", "popupOffset", "glass",
+  "height", "margin", "inset", "spacing", "background", "style", "divider", "notchWidth", "notchSpacing", "fillNotch", "popupOffset", "glass",
+  "followsWallpaper", "textFollowsBackground",
 ]);
+// Keep these aligned with ThemeLinkCandidate’s barNumberRanges.
+const barNumberRanges = {
+  "bar.height": [16, 100], "bar.inset": [0, 100], "bar.spacing": [0, 50],
+  "bar.margin": [0, 40], "bar.style.borderWidth": [0, 6], "bar.style.cornerRadius": [0, 40],
+  "bar.style.fontSize": [6, 40],
+  "bar.style.paddingHorizontal": [0, 40], "bar.style.paddingVertical": [0, 40],
+  "bar.style.opacity": [0, 1], "bar.popupOffset": [0, 40], "bar.glass.transparency": [0, 1],
+  "bar.divider.width": [0, 6], "bar.divider.height": [0, 100], "bar.divider.cornerRadius": [0, 40], "bar.divider.opacity": [0, 1],
+  "bar.notchWidth": [0, 1000], "bar.notchSpacing": [0, 100],
+  "bar.style.offsetX": [-1000, 1000], "bar.style.offsetY": [-1000, 1000],
+  "bar.style.shadowOffsetX": [-40, 40], "bar.style.shadowOffsetY": [-40, 40],
+};
+for (const fill of ["bar.background", "bar.style.background", "bar.style.hoverBackground", "bar.divider.background"]) {
+  barNumberRanges[`${fill}.gradient.angle`] = [0, 360];
+  barNumberRanges[`${fill}.gradient.locations`] = [0, 1];
+}
 const isObject = value => value !== null && typeof value === "object" && !Array.isArray(value);
 const withoutBOM = text => text.startsWith("\ufeff") ? text.slice(1) : text;
 const fail = reason => { throw new Error(reason); };
@@ -163,10 +180,23 @@ function scanJSON(text, limitProfiles, count) {
   if (depth !== 0 || inString || invalidValue) fail("damaged");
 }
 
+function checkBarNumbers(value, path) {
+  if (typeof value === "number") {
+    while (path[1] === "style" && path.length > 3 && path[2] === "states") path = [...path.slice(0, 2), ...path.slice(4)];
+    const [minimum, maximum] = barNumberRanges[path.join(".")] ?? [0, 1000];
+    if (value < minimum || value > maximum) fail("barProperty");
+  } else if (Array.isArray(value)) {
+    for (const child of value) checkBarNumbers(child, path);
+  } else if (isObject(value)) {
+    for (const [key, child] of Object.entries(value)) checkBarNumbers(child, [...path, key]);
+  }
+}
+
 function checkDocuments(document, count = { profiles: 0 }) {
   if (Object.hasOwn(document, "bar")) {
     if (!isObject(document.bar)) fail("barProperty");
     if (Object.keys(document.bar).some(key => !barProperties.has(key))) fail("barProperty");
+    checkBarNumbers(document.bar, ["bar"]);
   }
   if (Object.hasOwn(document, "includes")) fail("extraFiles");
   const profiles = Object.hasOwn(document, "profiles") ? document.profiles : [];
@@ -432,7 +462,7 @@ export function readmeRow({ id, name, description }) {
 export async function storeManifest(id, fetchImpl = fetch) {
   checkID(id);
   try {
-    const response = await fetchImpl(`https://raw.githubusercontent.com/Seb-GRAF/stablebar-packages/main/packages/${id}/package.json`);
+    const response = await fetchImpl(`https://raw.githubusercontent.com/stablebox/stablebar-packages/main/packages/${id}/package.json`);
     if (response.status === 404) return null;
     if (!response.ok) fail("storeUnavailable");
     const manifest = await response.json();

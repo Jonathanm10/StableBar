@@ -6,7 +6,21 @@ final class WidgetScripts {
     private weak var store: BarStore?
     var actionErrors: [String: String] = [:]
     var scripts: [String: ScriptWidget] = [:]
-    private(set) var providers: [String: ScriptWidget] = [:]
+    var providers: [String: ScriptWidget] = [:]
+    /// Outputs that providers of these types show instead of running, by type, such as setup's sample meeting.
+    var setupOutputs: [String: ScriptOutput] = [:] {
+        didSet {
+            guard let store, let configuration = store.configuration else { return }
+            let types = Set(oldValue.keys).union(setupOutputs.keys)
+            for (name, script) in providers where types.contains(configuration.providers[name]!.type) {
+                script.stop()
+                providers.removeValue(forKey: name)
+            }
+            run(configuration)
+            store.barPresentation.preparePresentations()
+            updateSuspension()
+        }
+    }
     private var visibleWidgets: [Int: Set<String>] = [:]
     private var pauses: Set<PauseReason> = []
     var popupWidgetID: String?
@@ -59,7 +73,9 @@ final class WidgetScripts {
                     }
                 }
             }
-            if provider.type == DataSourceType.merge.name {
+            if let output = setupOutputs[provider.type] {
+                try! script.accept(output)
+            } else if provider.type == DataSourceType.merge.name {
                 script.start(schedule: SourceSchedule(continuous: true)) { [weak self] in
                     MergeSource(inputs: provider.providers) { self?.providers[$0] }
                 }
@@ -254,6 +270,8 @@ final class WidgetScripts {
                 case let .set(setting):
                     let value = event.environment["VALUE"]!
                     try await BlockingWork.run { try setting.set(value) }
+                case let .nowPlaying(command):
+                    try await NowPlaying.send(command)
                 }
                 if let script, scripts[widget.id] === script {
                     refresh(widget, event: ScriptEvent(sender: "action", environment: event.environment))
@@ -291,10 +309,10 @@ final class WidgetScripts {
         }
     }
 
-    /// Makes the audio device with `id` the default output, for a click on `widget`.
-    func selectOutputDevice(_ id: String, widget: WidgetConfiguration) {
+    /// Makes the audio device with `id` the default output, or with `input` the default input, for a click on `widget`.
+    func selectAudioDevice(_ id: String, input: Bool, widget: WidgetConfiguration) {
         do {
-            try AudioMonitor.setOutputDevice(id)
+            try AudioMonitor.setDefaultDevice(id, input: input)
             if actionErrors[widget.id] != nil { actionErrors[widget.id] = nil }
         } catch {
             actionErrors[widget.id] = errorMessage(error)

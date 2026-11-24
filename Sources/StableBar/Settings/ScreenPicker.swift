@@ -33,28 +33,6 @@ extension ScreenKind {
     }
 }
 
-struct Wallpaper: View {
-    static let image = Bundle.main.url(forResource: "SetupDay", withExtension: "heic").flatMap(NSImage.init(contentsOf:))
-    var backgroundImage = Self.image
-
-    var body: some View {
-        GeometryReader { geometry in
-            if let image = backgroundImage {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: geometry.size.width, height: geometry.size.height)
-                    .blur(radius: max(geometry.size.width, geometry.size.height) * 0.03, opaque: true)
-                    .clipped()
-            } else {
-                SettingsPalette.background
-            }
-        }
-        // Clipping the scaled image only limits its drawing, not its hit area.
-        .allowsHitTesting(false)
-    }
-}
-
 struct ScreenBand: View {
     let editor: ConfigurationEditor
     let kinds: [ScreenKind]
@@ -201,7 +179,7 @@ private struct ScreenThumbnail: View {
         let notched = kind.display.notch != nil
         Button(action: select) {
             VStack(spacing: 4) {
-                Wallpaper()
+                SampleWallpaper()
                     .overlay(alignment: .top) {
                         HStack(spacing: 2) {
                             blocks([.left, .notchLeft])

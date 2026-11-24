@@ -7,6 +7,7 @@ struct PopupView: View {
     let widget: WidgetConfiguration
     var backgrounds: PopupBackgrounds?
     var navigation = PopupNavigation()
+    var size: PopupSize?
     @Environment(\.screenKind) private var screenKind
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -62,11 +63,11 @@ struct PopupView: View {
                             guard store.barEditing.allowsWidgetActions else { return }
                             if popup.dismissOnAction { store.popup.close() }
                             store.widgetScripts.selectInputSource(id, widget: widget)
-                        }, selectOutputDevice: { id in
+                        }, selectAudioDevice: { id, input in
                             guard store.barEditing.allowsWidgetActions else { return }
                             if popup.dismissOnAction { store.popup.close() }
-                            store.widgetScripts.selectOutputDevice(id, widget: widget)
-                        }, openSubmenu: { [screenKind] element, row in
+                            store.widgetScripts.selectAudioDevice(id, input: input, widget: widget)
+                        }, providerOutput: { store.widgetScripts.providers[$0]?.output }, openSubmenu: { [screenKind] element, row in
                             store.appMenu.openSubmenu(element, beside: row) { submenu in
                                 PopupView(popup: submenu, style: style, store: store, widget: widget).environment(\.screenKind, screenKind)
                             }
@@ -118,7 +119,10 @@ struct PopupView: View {
             if fillsHeight {
                 content.frame(maxHeight: .infinity, alignment: .top)
             } else {
-                ScrollView { content }
+                // A popup as tall as its content has nothing to scroll, yet while its height animates to taller content,
+                // its scroll view would show a scroll bar. Blocks inside keep their own scroll bars.
+                ScrollView { content.scrollIndicators(.automatic) }
+                    .scrollIndicators(size?.followsContent == true ? .never : .automatic)
             }
         }
         .overlay(alignment: .topTrailing) {

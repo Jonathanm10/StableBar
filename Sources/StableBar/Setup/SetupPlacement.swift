@@ -1,7 +1,7 @@
-/// Where setup puts the bar, chosen on its first step, and the change to the macOS menu bar that choice needs: the top
-/// edge hides the menu bar and the other places show it, which takes Automation access to System Events first. The
-/// latest choice wins: an answer or a change that arrives for an earlier choice is dropped, and so is one that arrives
-/// after Skip setup.
+/// Where setup puts the bar, and the change to the macOS menu bar that needs: the top edge hides the menu bar and below
+/// it shows it, which takes Automation access to System Events first. While the menu bar can't hide, the bar waits
+/// below it. The latest choice wins: an answer or a change that arrives for an earlier choice is dropped, and so is one
+/// that arrives after Skip setup.
 struct SetupPlacement: StateMachine, Equatable {
     typealias Placement = SetupPreferences.Placement
 
@@ -24,8 +24,10 @@ struct SetupPlacement: StateMachine, Equatable {
         /// Automation access turned out allowed, as after the person allows it in System Settings.
         case accessAllowed(menuBarHides: Bool)
         case accessChecked(MenuBarAutoHide.Access, request: Int)
-        /// `failure` is the error's message, or nil when the change worked.
-        case menuBarChanged(failure: String?, request: Int)
+        /// `failure` is the error's message, or nil when the change worked; `menuBarHides` is what macOS reports after it.
+        case menuBarChanged(failure: String?, menuBarHides: Bool, request: Int)
+        /// What macOS reports when setup reads the menu bar setting again, as when StableBar becomes active.
+        case menuBarRead(menuBarHides: Bool)
         case skipped
     }
 
@@ -35,8 +37,7 @@ struct SetupPlacement: StateMachine, Equatable {
         /// Moves the bar in setup's preview.
         case move(Placement)
         case checkAccess(request: Int)
-        /// `provesAccess` when the change needed Automation access, so it working shows access is allowed.
-        case changeMenuBar(hidden: Bool, provesAccess: Bool, request: Int)
+        case changeMenuBar(hidden: Bool, request: Int)
         case showError(String?)
     }
 
@@ -73,24 +74,36 @@ struct SetupPlacement: StateMachine, Equatable {
             guard answered == request, case .checkingAccess(let placement) = phase else { return [] }
             guard access == .allowed else {
                 phase = .awaitingAccess(placement)
-                return [.showError(nil)]
+                return [.showError(nil)] + fallback(from: placement)
             }
             phase = .changingMenuBar(placement)
-            return [.changeMenuBar(hidden: placement == .top, provesAccess: true, request: request)]
-        case .menuBarChanged(let failure, let answered):
+            return [.changeMenuBar(hidden: placement == .top, request: request)]
+        case .menuBarChanged(let failure, let menuBarHides, let answered):
             guard answered == request, case .changingMenuBar(let placement) = phase else { return [] }
-            guard let failure else {
+            // System Events can change the setting and still fail, as when it times out.
+            guard menuBarHides != (placement == .top) else {
                 phase = .placed(placement)
-                return [.move(placement), .showError(nil)]
+                return [.showError(nil), .move(placement)]
             }
             phase = .failed(placement)
+            var message = "StableBar couldn’t \(placement == .top ? "hide" : "show") the macOS menu bar."
             // -1743 is macOS refusing Automation access.
-            let detail = failure.contains("-1743") ? MenuBarAutoHide.accessHint : failure
-            return [.showError("StableBar couldn’t \(placement == .top ? "hide" : "show") the macOS menu bar. \(detail)")]
+            if let failure { message += " " + (failure.contains("-1743") ? MenuBarAutoHide.accessHint : failure) }
+            return fallback(from: placement) + [.showError(message)]
+        case .menuBarRead(let menuBarHides):
+            // Auto-hide turned off in System Settings gives the top edge back to the menu bar.
+            guard phase == .placed(.top), !menuBarHides else { return [] }
+            phase = .placed(.belowMenuBar)
+            return [.move(.belowMenuBar)]
         case .skipped:
             phase = .skipped
             return []
         }
+    }
+
+    /// The top edge belongs to the menu bar while it shows, so the bar waits below it.
+    private func fallback(from placement: Placement) -> [Effect] {
+        placement == .top ? [.move(.belowMenuBar)] : []
     }
 
     private mutating func choose(_ placement: Placement, menuBarHides: Bool) -> [Effect] {
@@ -99,7 +112,7 @@ struct SetupPlacement: StateMachine, Equatable {
         let move: [Effect] = placement == .top ? [] : [.move(placement)]
         guard (placement == .top) != menuBarHides else {
             phase = .changingMenuBar(placement)
-            return move + [.changeMenuBar(hidden: placement == .top, provesAccess: false, request: request)]
+            return move + [.changeMenuBar(hidden: placement == .top, request: request)]
         }
         phase = .checkingAccess(placement)
         return move + [.checkAccess(request: request)]

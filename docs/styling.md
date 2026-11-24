@@ -8,7 +8,15 @@ Each widget can override any of these styles:
 
 `fontName` is `system` or an installed font name. `fontWeight` is `regular`, `medium`, `semibold` or `bold`. Unset, text uses the system font at 13 points, regular, like the macOS menu bar. Set `width` on frequently changing widgets to keep their footprint stable. Without a `width`, the active app widget animates to fit each app's name, and the widgets beside it slide along. The workspace highlight uses `accent` and `accentText`; its motion respects Reduce Motion. Set `bar.motion` to `none` to remove animation.
 
-Styles also accept `hoverForeground`, `height`, `paddingLeading`, `paddingTrailing`, `paddingTop`, `paddingBottom`, `offsetX`, `offsetY` and `opacity`. Side-specific padding overrides horizontal/vertical padding. `ultralight`, `thin` and `light` font weights are available too. Offsets move the drawing without moving its neighbours.
+Styles also accept `hoverForeground`, `height`, `paddingLeading`, `paddingTrailing`, `paddingTop`, `paddingBottom`, `offsetX`, `offsetY`, `opacity`, `shadowOffsetX`, `shadowOffsetY`, `shadowFrom` and `appIcons`. Side-specific padding overrides horizontal/vertical padding. `ultralight`, `thin` and `light` font weights are available too. Offsets move the drawing without moving its neighbours.
+
+`shadowOffsetX` and `shadowOffsetY` move the `shadowColor` shadow right and down by that many points, or left and up when negative. Unset, a shadow drops 1 point. Widgets, [groups](layout.md#adaptive-layout-and-groups), popups and tooltips draw it.
+
+`shadowFrom` sets what casts a widget's shadow: `content`, the default, casts it from everything the widget draws, text and symbols included, and `shape` from its background alone, as groups, popups and tooltips do; a widget without a background then casts none. Use `shape` for a hard shadow, one with a `shadowRadius` of 0, which would otherwise double the widget's text:
+
+```json
+"defaults": { "background": "#ffffff", "shadowColor": "#000000", "shadowRadius": 0, "shadowOffsetX": 2, "shadowOffsetY": 2, "shadowFrom": "shape" }
+```
 
 `symbolVariant` draws SF Symbols in one of their variants, so `bell` with `fill` draws as `bell.fill`: `fill`, `slash`, `circle`, `square` or `rectangle`, or several joined by dots in the order SF Symbols names them (slash, then one shape, then fill), such as `circle.fill` or `slash.circle.fill`. A symbol without that variant keeps its own look. `none` draws symbols as named, undoing a variant set in a lower layer. Like `iconSize`, it reaches a layout's blocks. Set it in a state to change a symbol while the state is active, such as a leaf that fills while the Apple menu is open:
 
@@ -16,6 +24,17 @@ Styles also accept `hoverForeground`, `height`, `paddingLeading`, `paddingTraili
 {
   "id": "apple", "type": "appleMenu", "position": "left",
   "layout": { "type": "symbol", "name": "leaf", "style": { "states": { "open": { "symbolVariant": "fill" } } } }
+}
+```
+
+`appIcons` sets how app icons draw: `color`, the default, keeps their own colors, and `tinted` draws them in the text color, keeping enough of their light and dark parts to recognize them on a light or a dark background. It covers the app icons of the workspaces, active app, App menus and Menu bar items widgets and the apps in the System and Sound popups. Like `iconSize`, it reaches a layout's blocks and the widget's popup. A theme sets it in `defaults`; a widget's `style` brings back the colors on that widget, and the workspace `appStyle`, with its states, sets it for workspace icons alone:
+
+```json
+{
+  "defaults": { "appIcons": "tinted" },
+  "widgets": [
+    { "id": "app", "type": "activeApp", "position": "left", "style": { "appIcons": "color" } }
+  ]
 }
 ```
 
@@ -63,7 +82,7 @@ An unmapped non-main mode activates only `mode`. Aliases start with a letter and
 
 ## Presentation roles and workspace defaults
 
-`role` is an explicit annotation on a widget or any layout/popup block. The allowed names are `time`, `primary`, `secondary`, `key`, `value`, `heading`, `button`, `meter`, `separator` and `slider`; unknown names are errors. Sliders have the default role described below; other blocks and widgets are not selected by type or ID. In particular, two `clock` widgets can use `time` and `secondary` independently. Built-in supplies an empty fallback for each role.
+`role` is an explicit annotation on a widget or any layout/popup block. The allowed names are `time`, `primary`, `secondary`, `key`, `value`, `heading`, `button`, `meter`, `separator` and `slider`; unknown names are errors. Sliders have the default role described below; other blocks and widgets are not selected by type or ID. In particular, two `clock` widgets can use `time` and `secondary` independently. The [fallback](themes.md) under every theme defines each role, empty.
 
 ```json
 {
@@ -92,8 +111,9 @@ role other than `slider` also keeps the native control when `filled` is omitted.
 
 This applies to popup sliders, hover layouts and Sound's built-in hover control. Automatically
 styled sliders fit the widget's content height inline, or a line of text when it has no fixed
-height. Popups and hover tooltips use the role's height, 28 points by default. Existing explicit
-filled sliders keep their configured sizing.
+height. Popups use the role's height, 28 points by default, and hover tooltips keep to a line
+of their text, like macOS's slider there. Existing explicit filled sliders keep their configured
+sizing.
 
 [Themed sliders](../examples/themed-sliders.json) styles Sound's popup and built-in hover control
 without adding `filled` or an explicit role to either slider.
@@ -102,7 +122,7 @@ Layers apply from lowest to highest:
 
 | Element | Base layers |
 | --- | --- |
-| Bar widget | `defaults` → `roles[role]` → widget `style` → output `widgetStyles` in configuration order → own output `style`/`color` |
+| Bar widget | `defaults` → `roles[role]` → its group's `foreground` → widget `style` → output `widgetStyles` in configuration order → own output `style`/`color` |
 | Layout/popup block | inherited text style → `roles[role]` → block `style` → named output style selected by `styleSource`/`styleField` |
 | Popup panel | `defaults` → `popupDefaults` → widget's explicit `style` → popup `style`; the bar widget's role is excluded. Padding and spacing skip `defaults` and the widget's `style`, starting from 16 points of padding, 12 between the blocks of the popup's top-level column and 6 in any other row, column or list |
 | Group | `groupDefaults` → group `style` |
@@ -115,7 +135,7 @@ Active states apply after the base layers in the order documented above. An expl
 
 **Migration:** opt in by adding roles to the time clock, a separate date clock, and popup blocks you want themed. Remove explicit fonts/colors when you want the role to control them. An explicit widget font still reaches its popup; a `time` role font does not. Keep music-popup rows/columns in the widget definition so every theme can style that same structure. Existing `widgetStyles` overrides, including a legacy self-targeted override, remain supported below the widget's own output style.
 
-In **Settings → Bar**, a widget’s **More** menu sets its presentation role, and **Style → Workspaces** edits workspace indicators. **Theme → Advanced** edits shared role styles, workspace look and AeroSpace mode names; theme cards show sample widgets and the workspace indicator. **Profiles** can override these maps through its JSON editor or by editing the profile in Bar and Theme. The shared CLI uses `roles`, `workspaceDefaults` and `modeAliases` batch actions; `set` assigns a widget's role or layout/block roles. **Status**/`--query` report the role, resolved style, ordered layers and source/token origins.
+In **Settings → Bar**, a widget’s **More** menu sets its presentation role, and **Style → Workspaces** edits workspace indicators. **Theme → Workspaces** edits the workspace look, and **Theme → Advanced** shared role styles and AeroSpace mode names; theme cards show sample widgets and the workspace indicator. **Profiles** can override these maps through its JSON editor or by editing the profile in Bar and Theme. The shared CLI uses `roles`, `workspaceDefaults` and `modeAliases` batch actions; `set` assigns a widget's role or layout/block roles. **Status**/`--query` report the role, resolved style, ordered layers and source/token origins.
 
 ## Data states
 

@@ -65,6 +65,7 @@ struct StableBarApp {
                 dispatchMain()
             case let .renderDocsImages(directory):
                 NSApplication.shared.setActivationPolicy(.accessory)
+                OffscreenSnapshot.showScrollBars()
                 Task {
                     do {
                         try await DocsImages.render(to: directory)
@@ -77,8 +78,9 @@ struct StableBarApp {
                 NSApplication.shared.run()
             case let .renderScenes(output, scenes):
                 NSApplication.shared.setActivationPolicy(.accessory)
+                OffscreenSnapshot.showScrollBars()
                 Task {
-                    let report = await SceneRenderer.renderAll(scenes, to: output)
+                    let report = await SceneRenderer.render(scenes, to: output)
                     if report.failures > 0 {
                         FileHandle.standardError.write(Data("\(report.failures) scene(s) failed; see \(output.appending(path: "scenes.json").path)\n".utf8))
                     }
@@ -106,6 +108,12 @@ struct StableBarApp {
             case let .finishUninstall(bar):
                 Task { exit(await UninstallSystem.finish(after: bar)) }
                 dispatchMain()
+            case .homebrewUninstall:
+                exit(HomebrewUninstall.start())
+            case let .finishHomebrewUninstall(brew, app, showsMenuBar):
+                Task { exit(await HomebrewUninstall.finish(after: brew, app: app, showsMenuBar: showsMenuBar)) }
+                // Without brew's process ID, Launch Services opened it and waits for it to check in as an app.
+                if brew == nil { NSApplication.shared.run() } else { dispatchMain() }
             case let .finishApplicationMove(plan, bar):
                 Task { exit(await ApplicationMoveRelaunch.finish(planURL: plan, parent: bar)) }
                 dispatchMain()
@@ -299,6 +307,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         store.configurationStore.prepareScreenSetup(ScreenSetup(NSScreen.screens.map(BarDisplay.init)))
         applicationMoveResume.load(for: store)
         MenuBarAutoHide.forgetIfShown()
+        if !AudioMixer.shared.state.settings.isEmpty { AudioMixer.shared.start() }
         endMenuBarReveals()
         NSApp.mainMenu = EditMenu.make()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -307,6 +316,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
+        if let window = statusItem.button?.window { MenuBarAppearance.shared.watch(window) }
         store.onConfigurationChange = { [weak self] in
             guard let self else { return }
             updatePanels()
@@ -365,6 +375,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let environment = Task {
                 let variables = try await readLoginShellEnvironment()
                 shellEnvironment.withLock { $0 = variables }
+                NotificationCenter.default.post(name: loginShellEnvironmentLoaded, object: nil)
             }
             // A profile can take much longer to read right after login, so the bar starts after 10 seconds
             // at most, and what started with the app's own environment runs again once the shell's arrives.
@@ -380,10 +391,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             systemContext!.watch(store.profiles.filter(\.enabled))
             if let kind = applicationMoveResume.pendingKind {
                 switch kind {
-                case .setup: showSetup()
+                case .setup: openSetup(reopened: false)
                 case .settings: customization.show(store: store, section: .general)
                 }
-            } else if !applicationMoveResume.wasResuming, SetupProgress.opensAtLaunch(in: .standard) { showSetup() }
+            } else if !applicationMoveResume.wasResuming, SetupProgress.opensAtLaunch(in: .standard) { openSetup(reopened: false) }
             await store.crashReports.refresh()
             if appIsInApplications() {
                 Task.detached { await ApplicationMover.cleanUpPreviousCopies(using: ApplicationMoveSystem()) }
@@ -614,18 +625,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         themeTrial.show(store: store, bar: bar, screen: screen)
     }
 
-    @objc func showSetup() {
-        setup.show(store: store,
-            arrangeBar: { [weak self] in self?.store.barEditing.begin() },
-            customizeWidgets: { [weak self] in
-                guard let self else { return }
-                customization.show(store: store, section: .widgets)
-            },
-            showProfile: { [weak self] name in
-                guard let self else { return }
-                customization.show(store: store, section: .profiles)
-                store.onCustomizeProfile?(name)
-            })
+    @objc func showSetup() { openSetup(reopened: true) }
+
+    private func openSetup(reopened: Bool) {
+        setup.show(store: store, reopened: reopened, editBar: { [weak self] in self?.store.barEditing.begin() })
     }
     @objc private func quit() { NSApp.terminate(nil) }
 

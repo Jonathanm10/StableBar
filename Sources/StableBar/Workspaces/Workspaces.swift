@@ -80,9 +80,9 @@ struct AeroSpaceEvent: Decodable, Sendable {
 }
 
 enum WorkspaceSource: String, Codable, Sendable {
-    case aerospace, yabai, omniwm, rift, spaces
+    case aerospace, yabai, omniwm, rift, kiwidesk, spaces
 
-    var supportsWindowMoves: Bool { self == .aerospace || self == .yabai || self == .rift }
+    var supportsWindowMoves: Bool { self == .aerospace || self == .yabai || self == .rift || self == .kiwidesk }
 
     var title: String {
         switch self {
@@ -90,34 +90,54 @@ enum WorkspaceSource: String, Codable, Sendable {
         case .yabai: "yabai"
         case .omniwm: "OmniWM"
         case .rift: "Rift"
+        case .kiwidesk: "KiwiDesk"
         case .spaces: "Spaces"
         }
     }
 
-    /// The source's command on `path`, or the `omniwmctl` inside OmniWM's app. Spaces needs no command.
+    /// The app of a manager that runs as one: its running check, its launch and its bundled command use it.
+    var bundleID: String? {
+        switch self {
+        case .aerospace: aerospaceBundleID
+        case .omniwm: omniwmBundleID
+        case .kiwidesk: kiwideskBundleID
+        case .yabai, .rift, .spaces: nil
+        }
+    }
+
+    /// The source's command on `path`, or the copy inside its app. Spaces needs no command.
     func executable(path: String) -> String? {
         let name: String
+        let bundled: String?
         switch self {
-        case .aerospace, .yabai: name = rawValue
-        case .omniwm: name = "omniwmctl"
-        case .rift: name = "rift-cli"
+        case .aerospace, .yabai: (name, bundled) = (rawValue, nil)
+        case .omniwm: (name, bundled) = ("omniwmctl", "omniwmctl")
+        case .rift: (name, bundled) = ("rift-cli", nil)
+        case .kiwidesk: (name, bundled) = ("kiwidesk", "KiwiDesk")
         case .spaces: return nil
         }
         if let directory = path.split(separator: ":").first(where: { FileManager.default.isExecutableFile(atPath: "\($0)/\(name)") }) {
             return "\(directory)/\(name)"
         }
-        guard self == .omniwm,
-              let bundled = NSWorkspace.shared.urlForApplication(withBundleIdentifier: omniwmBundleID)?
-                .appending(path: "Contents/MacOS/omniwmctl").path,
-              FileManager.default.isExecutableFile(atPath: bundled) else { return nil }
-        return bundled
+        guard let bundled, let bundleID,
+              let command = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)?
+                .appending(path: "Contents/MacOS/\(bundled)").path,
+              FileManager.default.isExecutableFile(atPath: command) else { return nil }
+        return command
     }
 
-    /// Whether the manager runs for this user: AeroSpace's or OmniWM's app, or the yabai or Rift service. Spaces always does.
+    static let windowManagers: [WorkspaceSource] = [.aerospace, .yabai, .omniwm, .rift, .kiwidesk]
+
+    /// The window managers whose command is on `path`, or inside their app.
+    static func installed(path: String) -> Set<WorkspaceSource> {
+        Set(windowManagers.filter { $0.executable(path: path) != nil })
+    }
+
+    /// Whether the manager runs for this user: its app, or the yabai or Rift service. Spaces always does.
     var isRunning: Bool {
         switch self {
-        case .aerospace: !NSRunningApplication.runningApplications(withBundleIdentifier: aerospaceBundleID).isEmpty
-        case .omniwm: !NSRunningApplication.runningApplications(withBundleIdentifier: omniwmBundleID).isEmpty
+        case .aerospace, .omniwm, .kiwidesk:
+            bundleID.map { !NSRunningApplication.runningApplications(withBundleIdentifier: $0).isEmpty } == true
         case .yabai: userProcessIsRunning(named: "yabai")
         case .rift: userProcessIsRunning(named: "rift")
         case .spaces: true
@@ -129,7 +149,7 @@ enum WorkspaceSource: String, Codable, Sendable {
     static func detected(path: String, configured: WorkspaceSource?,
                          running: (WorkspaceSource) -> Bool = { $0.isRunning }) -> WorkspaceSource {
         if let configured, configured == .spaces || configured.executable(path: path) != nil { return configured }
-        return [.aerospace, .yabai, .omniwm, .rift].first { $0.executable(path: path) != nil && running($0) } ?? .spaces
+        return windowManagers.first { $0.executable(path: path) != nil && running($0) } ?? .spaces
     }
 }
 
@@ -219,6 +239,15 @@ final class WorkspaceStore {
     private(set) var mode: String?
     /// Injectable executable lookup lets lifecycle tests use a scratch event stream.
     var executablePath: (() throws -> String)?
+    /// Watches for an app's launch while the store keeps the returned token. macOS posts no launch notification
+    /// for a menu bar app, such as KiwiDesk, so this watches the running apps instead.
+    var watchLaunches: (_ bundleID: String, _ launched: @escaping @MainActor @Sendable () -> Void) -> AnyObject = { bundleID, launched in
+        NSWorkspace.shared.observe(\.runningApplications, options: [.old, .new]) { _, change in
+            let lists = { (apps: [NSRunningApplication]?) in apps?.contains { $0.bundleIdentifier == bundleID } == true }
+            guard lists(change.newValue), !lists(change.oldValue) else { return }
+            DispatchQueue.main.async { MainActor.assumeIsolated { launched() } }
+        }
+    }
     /// Where diagnostics go, such as how a subscription ended; tests read them instead.
     var log: (String) -> Void = { FileHandle.standardError.write(Data("StableBar: \($0)\n".utf8)) }
     private(set) var tracksWorkspaces = true
@@ -238,6 +267,7 @@ final class WorkspaceStore {
     private var task: Task<Void, Never>?
     private var process: Process?
     private var observers: [NSObjectProtocol] = []
+    private var launchWatch: AnyObject?
     private var activationObserver: NSObjectProtocol?
     private let notificationCenter: NotificationCenter
     private let workspaceNotificationCenter: NotificationCenter
@@ -293,13 +323,8 @@ final class WorkspaceStore {
         }
         let source = source
         let title = source.title
-        if source != .rift {
-            observers = [workspaceNotificationCenter.addObserver(
-                forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main) { [weak self] notification in
-                guard (notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleIdentifier
-                        == (source == .omniwm ? omniwmBundleID : aerospaceBundleID) else { return }
-                MainActor.assumeIsolated { self?.start() }
-            }]
+        if let bundleID = source.bundleID {
+            launchWatch = watchLaunches(bundleID) { [weak self] in self?.reconnect() }
         }
         task = Task {
             var failures = 0
@@ -316,6 +341,9 @@ final class WorkspaceStore {
                                             "--no-send-initial", "--format", "ndjson"]
                     case .rift:
                         stream.arguments = ["subscribe", "mach", "*"]
+                    case .kiwidesk:
+                        stream.arguments = ["subscribe", "space_change", "focus_change", "monitor_change", "desktop_change",
+                                            "window_created", "window_destroyed", "window_moved_to_space"]
                     default:
                         stream.arguments = ["subscribe", "focused-workspace-changed", "focused-monitor-changed", "focus-changed",
                                             "window-detected", "mode-changed"]
@@ -355,6 +383,7 @@ final class WorkspaceStore {
                         try Task.checkCancellation()
                         if source == .omniwm { failure = receiveOmniWM(line) ?? failure }
                         else if source == .rift { connectionError = nil; requestRefresh() }
+                        else if source == .kiwidesk { receiveKiwiDesk(line) }
                         else if let event = try? JSONDecoder().decode(AeroSpaceEvent.self, from: line) { receive(event) }
                     }
                     try Task.checkCancellation()
@@ -416,6 +445,13 @@ final class WorkspaceStore {
         return nil
     }
 
+    /// KiwiDesk confirms a subscription with a status line, then sends one line per event.
+    private func receiveKiwiDesk(_ line: Data) {
+        guard let message = try? JSONDecoder().decode(KiwiDeskMessage.self, from: line), message.status != "error" else { return }
+        connectionError = nil
+        if message.event != nil { requestRefresh() }
+    }
+
     func acceptMode(_ mode: String?) {
         let next = source == .aerospace ? mode : nil
         guard self.mode != next else { return }
@@ -466,6 +502,8 @@ final class WorkspaceStore {
             snapshot = try await readOmniWMWorkspaces(executable(), screenIDs: screenIDs)
         case .rift:
             snapshot = try await riftSnapshot(executable(), screenIDs: screenIDs)
+        case .kiwidesk:
+            snapshot = try await readKiwiDeskWorkspaces(executable(), screenIDs: screenIDs)
         case .spaces:
             snapshot = try readSpaces()
         }
@@ -493,6 +531,7 @@ final class WorkspaceStore {
         case .yabai: run([["-m", "space", "--focus", workspace.name]])
         case .omniwm: run([["workspace", "focus-name", workspace.name]])
         case .rift: run(riftFocusDisplay(of: workspace) + [["execute", "workspace", "switch", String(workspace.riftIndex!)]])
+        case .kiwidesk: run([["focus_space", workspace.name]])
         }
     }
 
@@ -506,6 +545,7 @@ final class WorkspaceStore {
         case .aerospace: return run([["focus", "--window-id", String(window.id)]], about: window)
         case .yabai: return run([["-m", "window", "--focus", String(window.id)]], about: window)
         case .omniwm: return window.reference.map { run([["window", "focus", $0]], about: window) }
+        case .kiwidesk: return run([["focus_window", String(window.id)]], about: window)
         case .rift:
             return window.reference.map { reference in
                 let focus = ["execute", "window", "focus", "--window-id", reference]
@@ -591,6 +631,8 @@ final class WorkspaceStore {
                         arguments = ["-m", "window", String(window.id), "--space", workspace]
                     case .rift:
                         arguments = ["execute", "workspace", "move-window", String(riftIndex!), String(window.id)]
+                    case .kiwidesk:
+                        arguments = ["move_to_space", workspace, String(window.id)]
                     default:
                         throw CommandFailure(message: "\(payload.source.title) does not support moving windows.")
                     }
@@ -665,6 +707,7 @@ final class WorkspaceStore {
         process = nil
         for observer in observers { workspaceNotificationCenter.removeObserver(observer) }
         observers = []
+        launchWatch = nil
         if let activationObserver { notificationCenter.removeObserver(activationObserver) }
         activationObserver = nil
     }

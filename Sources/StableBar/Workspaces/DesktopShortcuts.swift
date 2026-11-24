@@ -59,9 +59,10 @@ struct DesktopShortcuts {
         return Shortcut(key: key, modifiers: modifiers)
     }
 
-    /// Opens the public Keyboard Shortcuts URL; macOS may show the Keyboard pane first.
+    /// Opens the Keyboard Shortcuts sheet, which has no anchor for Mission Control, or the Keyboard pane's older URL.
     @MainActor static func openSettings(open: (URL) -> Bool = { NSWorkspace.shared.open($0) }) throws {
-        if open(URL(string: "x-apple.systempreferences:com.apple.preference.keyboard?Shortcuts")!) { return }
+        for url in ["x-apple.systempreferences:com.apple.Keyboard-Settings.extension?Shortcuts",
+                    "x-apple.systempreferences:com.apple.preference.keyboard?Shortcuts"] where open(URL(string: url)!) { return }
         throw CommandFailure(message: "Open System Settings → Keyboard → Keyboard Shortcuts → Mission Control to turn on Switch to Desktop.")
     }
 }

@@ -163,7 +163,7 @@
     },
     "workspaceSource": {
       "type": "string",
-      "enum": ["aerospace", "yabai", "omniwm", "rift", "spaces"]
+      "enum": ["aerospace", "yabai", "omniwm", "rift", "kiwidesk", "spaces"]
     },
     "modeAliases": {
       "anyOf": [
@@ -345,6 +345,7 @@
               "enum": [
                 "background",
                 "underline",
+                "cells",
                 "none"
               ]
             },
@@ -696,6 +697,14 @@
           ],
           "description": "Workspace indicatorStyle only: cell preserves cell-relative drawing; belowBar starts at the visible bar bottom plus offsetY."
         },
+        "show": {
+          "anyOf": [
+            { "enum": ["both", "label", "apps", "none"] },
+            { "$ref": "#/definitions/reference" },
+            { "type": "null" }
+          ],
+          "description": "Workspace cell style only: what the cell shows, its label and app icons (both, the default), one of them, or none."
+        },
         "borderEdges": {
           "anyOf": [
             { "enum": ["bottom", "all"] },
@@ -746,6 +755,14 @@
           ],
           "description": "The SF Symbols variant to draw symbols in, such as fill, slash or circle.fill: slash, then at most one shape, then fill, as SF Symbols names them. A symbol without it keeps its own look; none draws symbols as named."
         },
+        "appIcons": {
+          "anyOf": [
+            { "enum": ["color", "tinted"] },
+            { "$ref": "#/definitions/reference" },
+            { "type": "null" }
+          ],
+          "description": "How app icons are drawn: color, in their own colors, or tinted, in the text color with their own light and dark parts. color by default."
+        },
         "paddingHorizontal": {
           "$ref": "#/definitions/number"
         },
@@ -766,6 +783,22 @@
         },
         "shadowRadius": {
           "$ref": "#/definitions/number"
+        },
+        "shadowOffsetX": {
+          "$ref": "#/definitions/number",
+          "description": "How far the shadow moves right, in points; negative moves it left. 0 by default."
+        },
+        "shadowOffsetY": {
+          "$ref": "#/definitions/number",
+          "description": "How far the shadow drops, in points; negative raises it. 1 by default."
+        },
+        "shadowFrom": {
+          "anyOf": [
+            { "enum": ["content", "shape"] },
+            { "$ref": "#/definitions/reference" },
+            { "type": "null" }
+          ],
+          "description": "What casts a widget's shadow: content, its text, symbols and background together, or shape, its background shape alone, as a group's does. content by default."
         },
         "height": {
           "$ref": "#/definitions/number"
@@ -1111,6 +1144,10 @@
             }
           ]
         },
+        "tinted": {
+          "$ref": "#/definitions/boolean",
+          "description": "For image blocks: draw a one-color image, such as a logo, in the text color as symbols are; only its shape counts, not its colors."
+        },
         "name": {
           "$ref": "#/definitions/string"
         },
@@ -1137,6 +1174,29 @@
         },
         "selectOutputDeviceField": {
           "$ref": "#/definitions/string"
+        },
+        "selectInputDeviceField": {
+          "$ref": "#/definitions/string"
+        },
+        "nowPlayingCommand": {
+          "anyOf": [
+            {
+              "enum": [
+                "togglePlayPause",
+                "nextTrack",
+                "previousTrack",
+                "skipBackward",
+                "skipForward"
+              ]
+            },
+            {
+              "$ref": "#/definitions/reference"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What a click sends to the app that plays now, without a command: play or pause, the next or previous track, or 15 seconds back or forward."
         },
         "openMenuBarItem": {
           "$ref": "#/definitions/menuBarItem"
@@ -1192,6 +1252,8 @@
               "enum": [
                 "volume",
                 "muted",
+                "inputVolume",
+                "inputMuted",
                 "wifiPower"
               ]
             },
@@ -1202,7 +1264,7 @@
               "type": "null"
             }
           ],
-          "description": "In place of onChange, what a slider or toggle changes without a command: volume for a slider, muted or wifiPower for a toggle."
+          "description": "In place of onChange, what a slider or toggle changes without a command: volume or inputVolume for a slider, muted, inputMuted or wifiPower for a toggle."
         },
         "endStop": {
           "$ref": "#/definitions/sliderEndStop",
@@ -1210,7 +1272,7 @@
         },
         "filled": {
           "$ref": "#/definitions/boolean",
-          "description": "For sliders: true draws a filled bar in the block's own style; false keeps macOS's slider. Omit to follow a nonempty slider role, unless another role is assigned. The background is the track and accent is the fill. Automatically themed sliders fit the widget's content height inline; popups and tooltips default to 28 points. An endStop follows a notch and fills the whole bar."
+          "description": "For sliders: true draws a filled bar in the block's own style; false keeps macOS's slider. Omit to follow a nonempty slider role, unless another role is assigned. The background is the track and accent is the fill. Automatically themed sliders fit the widget's content height inline and a line of text in hover tooltips; popups default to 28 points. An endStop follows a notch and fills the whole bar."
         },
         "icon": {
           "$ref": "#/definitions/string",
@@ -1361,6 +1423,7 @@
               "enum": [
                 "background",
                 "underline",
+                "cells",
                 "none"
               ]
             },
@@ -1601,6 +1664,7 @@
                 "audio",
                 "inputSource",
                 "microphone",
+                "nowPlaying",
                 "privacy",
                 "calendar"
               ]
@@ -1974,6 +2038,7 @@
                 "audio",
                 "inputSource",
                 "microphone",
+                "nowPlaying",
                 "privacy",
                 "calendar",
                 "merge"
@@ -2142,9 +2207,10 @@
       "anyOf": [
         { "required": ["type"], "properties": { "type": { "not": { "type": "null" } } } },
         { "required": ["role"], "properties": { "role": { "not": { "type": "null" } } } },
-        { "required": ["id"] }
+        { "required": ["id"] },
+        { "required": ["others"], "properties": { "others": { "anyOf": [{ "const": true }, { "$ref": "#/definitions/reference" }] } } }
       ],
-      "description": "Matches a widget that has every key listed. A selector naming id beats one that doesn't, then the one naming more keys, then the group with the lower ID.",
+      "description": "Matches a widget that has every key listed. A selector naming id beats one that doesn't, then the one naming more keys, then the group with the lower ID. others comes last.",
       "properties": {
         "type": {
           "anyOf": [
@@ -2172,6 +2238,7 @@
                 "audio",
                 "inputSource",
                 "microphone",
+                "nowPlaying",
                 "privacy",
                 "calendar"
               ]
@@ -2188,6 +2255,10 @@
         "id": {
           "type": "string",
           "description": "A widget ID, such as one a package fixes."
+        },
+        "others": {
+          "$ref": "#/definitions/boolean",
+          "description": "true takes every widget that no other selector names, such as a Store widget, a script or one of your own, but not spacers, in a pill in each position."
         }
       }
     },
@@ -2351,6 +2422,14 @@
             }
           ]
         },
+        "divider": {
+          "anyOf": [
+            { "$ref": "#/definitions/style" },
+            { "$ref": "#/definitions/reference" },
+            { "type": "null" }
+          ],
+          "description": "A line the bar draws between two widgets or groups side by side. It shows while it has a background, which sets its color; its width is 1 and its height 16 unless set, and cornerRadius and opacity apply too."
+        },
         "appearance": {
           "anyOf": [
             {
@@ -2367,6 +2446,14 @@
             }
           ],
           "description": "Shows the bar and its popups in the light or dark appearance. Omit to follow the system."
+        },
+        "followsWallpaper": {
+          "$ref": "#/definitions/boolean",
+          "description": "Without an appearance, show the bar on each display in the light or dark look macOS gives that display's menu bar, which follows its wallpaper. StableBar learns a display's look when its menu bar becomes active and keeps it; until then the bar follows the system. Popups keep the system appearance. Disabled by default."
+        },
+        "textFollowsBackground": {
+          "$ref": "#/definitions/boolean",
+          "description": "Draw a widget's text and symbols in the other appearance's colors when the bar's own read below 3:1 on what is behind them, and the other's read better: the widget's background, its group's, the bar's, or the wallpaper, as light or dark as the display's menu bar. Disabled by default."
         }
       }
     },
@@ -2432,7 +2519,7 @@
         },
         "theme": {
           "$ref": "#/definitions/string",
-          "description": "ID of the theme the bar is drawn with, at any version: built-in for Built-in or a theme turned off."
+          "description": "ID of the theme the bar is drawn with, at any version: built-in for a bar without a theme or with its theme turned off."
         }
       }
     },
@@ -2534,11 +2621,20 @@
             "style": {
               "$ref": "#/definitions/bar/properties/style"
             },
+            "divider": {
+              "$ref": "#/definitions/bar/properties/divider"
+            },
             "glass": {
               "$ref": "#/definitions/bar/properties/glass"
             },
             "appearance": {
               "$ref": "#/definitions/bar/properties/appearance"
+            },
+            "followsWallpaper": {
+              "$ref": "#/definitions/bar/properties/followsWallpaper"
+            },
+            "textFollowsBackground": {
+              "$ref": "#/definitions/bar/properties/textFollowsBackground"
             },
             "motion": {
               "$ref": "#/definitions/bar/properties/motion"

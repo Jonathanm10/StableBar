@@ -76,7 +76,11 @@ extension BarStore {
         let widget = widgetID.flatMap { id in configuration?.widgets.first { $0.id == id } }
         var paths = defaultsPath.map { [$0] } ?? []
         if let widget, path == "widgets.\(widget.id).style", let role = widget.role { paths.append("roles.\(role.rawValue)") }
-        paths.append(path)
+        var groupPaths: [String] = []
+        if let widget, path == "widgets.\(widget.id).style", key == "foreground", let group = widget.group {
+            groupPaths = ["groupDefaults", "groups.\(group).style"]
+        }
+        paths += groupPaths + [path]
         let tokens = (try? effectiveDocument["tokens"]?.decoded([String: ConfigurationValue].self)) ?? [:]
         let displayedKey = hover && key == "hoverBackground" ? "background" : key
 
@@ -143,11 +147,14 @@ extension BarStore {
         }
         let definition = widgetID.flatMap { origins["widgets.\($0).id"] }
         let mainDefinition = definition?.file == configurationStore.configurationURL.standardizedFileURL.path
+        let theme = configurationStore.selectedThemeKey.prefix { $0 != "/" }
+        let themeEdits = profiles.filter { $0.when?.onlyTheme == String(theme) && activeProfiles.contains($0.name) }.map(\.name)
         let saved = own.last { source in
             guard let origin = source.origin, origin.file == configurationStore.configurationURL.standardizedFileURL.path else { return false }
             if let profile = customizationHistory.editingProfile {
                 return origin.profile == profile && !origin.detail.contains("(template ")
             }
+            if let profile = origin.profile, themeEdits.contains(profile) { return !origin.detail.contains("(template ") }
             if widgetID != nil, mainDefinition {
                 return origin.profile == definition?.profile && !origin.detail.contains("(template ") && !origin.detail.contains("(widget override)")
             }
@@ -159,7 +166,7 @@ extension BarStore {
         var layers: [WidgetStyle] = []
         var states = StyleStates()
         if let configuration, let widget, path == "widgets.\(widget.id).style" {
-            layers = [configuration.defaults, configuration.roleStyle(widget.role), widget.barStyle]
+            layers = [configuration.defaults, configuration.roleStyle(widget.role), configuration.groupStyle(of: widget), widget.barStyle]
             for source in configuration.widgets {
                 if let style = widgetScripts.scripts[source.id]?.output.widgetStyles?[widget.id] {
                     runtime.append(("Output from \(source.id): widgetStyles", style))
@@ -194,7 +201,10 @@ extension BarStore {
             }
             var style = resolveStyle(layers)
             for state in states.names {
-                for root in paths { sources += configurationSources(root, keys: ["states", state, displayedKey]) }
+                // A group passes its widgets only its own foreground, not its states'.
+                for root in paths where !groupPaths.contains(root) {
+                    sources += configurationSources(root, keys: ["states", state, displayedKey])
+                }
                 for (title, output) in runtime {
                     if let value = propertyValue(output.configurationValue, at: ["states", state, displayedKey]), value != .null {
                         sources.append(PropertyValueSource(path: [], value: value, resolvedValue: value, origin: nil,
@@ -246,7 +256,14 @@ extension BarStore {
             path = ["profiles", profile, "configuration"] + path
         }
         let mask = path.dropFirst().reversed().reduce(ConfigurationValue.null) { .object([$1: $0]) }
-        try customizationHistory.change(ConfigurationEdit(action: .unset, properties: [path[0]: mask]), everyBar: everyBar)
+        let edit = ConfigurationEdit(action: .unset, properties: [path[0]: mask])
+        // A theme's profile of edits goes once its last edit does.
+        if let profile = origin.profile, profile != customizationHistory.editingProfile,
+           profiles.first(where: { $0.name == profile })?.when?.onlyTheme != nil {
+            try customizationHistory.change(removingEmptyThemeEdits([edit], profile: profile), everyBar: everyBar)
+        } else {
+            try customizationHistory.change(edit, everyBar: everyBar)
+        }
     }
 }
 

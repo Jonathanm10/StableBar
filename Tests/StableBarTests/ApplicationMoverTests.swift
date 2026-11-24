@@ -593,6 +593,8 @@ func applicationMoveCapturesSessionEditsAfterCopying(setup: Bool) async throws {
         }
         try #require(copyStarted.withLock { $0 })
         try store.configurationStore.applyEdits([ConfigurationEdit(action: .bar, properties: ["height": .number(38)])], persist: false)
+        // Setup's next preview keeps the edit.
+        session?.preferences.keepWindowsClear = true
     } catch {
         releaseCopy.signal()
         await moving.value
@@ -606,6 +608,7 @@ func applicationMoveCapturesSessionEditsAfterCopying(setup: Bool) async throws {
     #expect(captured.withLock { $0?.edits.count } == 2)
     #expect(captured.withLock { $0?.edits.first?.restored.properties } == baseline.properties)
     #expect(captured.withLock { $0?.edits.last?.restored.properties?["height"] } == .number(38))
+    if setup { #expect(captured.withLock { $0?.setup?.preferences.keepWindowsClear } == true) }
 }
 
 @Test func applicationMoveInstallsTheVerifiedCopyAndKeepsRunningResourcesInPlace() async throws {
@@ -1109,7 +1112,7 @@ func applicationMoveFilesystemErrorsHideStagingAndExplainRecovery(code: Int32) a
     #expect(!fixture.exists(fixture.destination))
     #expect(fixture.exists(fixture.source))
     #expect(store.configurationStore.sessionEdits.first?.properties == edit.properties)
-    #expect(ApplicationMoveController.setupHint.contains("Finishing touches"))
+    #expect(ApplicationMoveController.setupHint.contains("last step of setup"))
     store.barEditing.setupIsOpen = false
     let resume = try #require(move.resumeFromSettings(store: store))
     #expect(resume.kind == .settings)

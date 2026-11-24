@@ -14,6 +14,9 @@ struct BlockContext {
     /// The tallest a themed slider can be: in the bar, the widget's content area, and anywhere, the height of a block
     /// around it. Nil in popups and tooltips outside a block with a height.
     var inlineControlHeight: Double?
+    /// In a hover tooltip, a line of its text: the tallest a themed slider can be there, whatever blocks hold it, since
+    /// the role's height is meant for popups.
+    var tooltipLineHeight: Double?
     var continuousSliders = false
     /// Popup layouts fill their width; bar layouts take their content's width.
     var fillsWidth = true
@@ -32,8 +35,11 @@ struct BlockContext {
     var pressMenuBarItem: (MenuBarItemReference) -> Void = { _ in }
     /// Selects a `selectInputSourceField` block's keyboard input source.
     var selectInputSource: (String) -> Void = { _ in }
-    /// Makes a `selectOutputDeviceField` block's audio device the default output.
-    var selectOutputDevice: (String) -> Void = { _ in }
+    /// Makes a `selectOutputDeviceField` block's audio device the default output, or with `true` a
+    /// `selectInputDeviceField` block's the default input.
+    var selectAudioDevice: (String, Bool) -> Void = { _, _ in }
+    /// The latest output of another running provider, by its name, such as the microphone's for the Sound details.
+    var providerOutput: (String) -> ScriptOutput? = { _ in nil }
     /// Opens the submenu of an app menu block's item beside the item's row, or without an item, closes the one open
     /// beside the block.
     var openSubmenu: (AXUIElement?, NSView) -> Void = { _, _ in }
@@ -143,6 +149,15 @@ struct PopupBlockView: View {
     /// Whether the block shows its hover: only where it tracks hover, not in a default layout.
     private var hovered: Bool { pointerInside && context.tracksHover }
 
+    /// The text color while the block shows its hover. A tinted app icon fills with its own color, which
+    /// `foregroundStyle` doesn't reach.
+    private var hoveredForeground: Color? {
+        guard hovered else { return nil }
+        var hovering = context.states
+        hovering.hover = true
+        return resolvedStyle(states: hovering).text.foreground?.color
+    }
+
     @ViewBuilder
     var body: some View {
         if block.isHidden(fields: fields, values: context.values) {
@@ -213,7 +228,19 @@ struct PopupBlockView: View {
                     .buttonStyle(.plain)
                     .modifier(FocusRing(cornerRadius: appearance.cornerRadius))
             } else if let id = block.selectOutputDeviceField.flatMap({ fields[$0] }) {
-                Button { context.selectOutputDevice(id) } label: {
+                Button { context.selectAudioDevice(id, false) } label: {
+                    boxed(content(drawn, appearance: appearance), box: box, alignment: alignment)
+                }
+                    .buttonStyle(.plain)
+                    .modifier(FocusRing(cornerRadius: appearance.cornerRadius))
+            } else if let id = block.selectInputDeviceField.flatMap({ fields[$0] }) {
+                Button { context.selectAudioDevice(id, true) } label: {
+                    boxed(content(drawn, appearance: appearance), box: box, alignment: alignment)
+                }
+                    .buttonStyle(.plain)
+                    .modifier(FocusRing(cornerRadius: appearance.cornerRadius))
+            } else if let command = block.nowPlayingCommand {
+                Button { context.runAction(.nowPlaying(command), [:]) } label: {
                     boxed(content(drawn, appearance: appearance), box: box, alignment: alignment)
                 }
                     .buttonStyle(.plain)
@@ -252,8 +279,8 @@ struct PopupBlockView: View {
 
     private func resolvedStyle(states: StyleStates) -> BlockStyle {
         let style = block.resolvedStyle(inherited: inheritedStyle, styles: context.styles, fields: fields, states: states, roles: context.roles)
-        return block.automaticallyFillsSlider(roles: context.roles)
-            ? style.limitingSliderHeight(to: context.inlineControlHeight) : style
+        let limit = [context.inlineControlHeight, context.tooltipLineHeight].compactMap(\.self).min()
+        return block.automaticallyFillsSlider(roles: context.roles) ? style.limitingSliderHeight(to: limit) : style
     }
 
     private func fieldText(_ text: String) -> Text {
@@ -478,8 +505,8 @@ struct PopupBlockView: View {
                         .modifier(TransitioningContent(value: symbol, transition: transition, animation: animation, numeric: false))
                 }
             }
-        case let .image(path, source, fit):
-            WidgetImage(path: source.flatMap { fields[$0] } ?? path, fit: fit)
+        case let .image(path, source, fit, tinted):
+            WidgetImage(path: source.flatMap { fields[$0] } ?? path, fit: fit, tinted: tinted)
                 .frame(width: style.box.width ?? 52, height: style.box.height ?? 52)
                 .clipped()
                 .clipShape(RoundedRectangle(cornerRadius: appearance.cornerRadius))
@@ -509,6 +536,7 @@ struct PopupBlockView: View {
         case .appIcon:
             if let icon = context.appIcon {
                 Image(nsImage: icon).resizable().frame(width: appearance.iconSize, height: appearance.iconSize)
+                    .styledAppIcon(appearance.appIcons, color: hoveredForeground ?? appearance.foreground)
             }
         case .appUpdate:
             if let update = context.update, let version = update.version {
@@ -520,7 +548,7 @@ struct PopupBlockView: View {
             MenuBarItemsRow(items: items, appearance: appearance, openAnchor: context.menuBarItemAnchor, open: context.openMenuBarItem,
                             hover: context.hoverMenuBarItem, press: context.pressMenuItem, place: context.placeMenuBarItem)
         case let .essentials(kind, timeZone):
-            EssentialsDetails(kind: kind, timeZone: timeZone, fields: fields, context: context, appearance: appearance)
+            EssentialsDetails(kind: kind, timeZone: timeZone, style: inheritedStyle, fields: fields, context: context, appearance: appearance)
         }
     }
 }

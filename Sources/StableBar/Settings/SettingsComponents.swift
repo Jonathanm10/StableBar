@@ -205,7 +205,7 @@ struct NumberField: View {
     var body: some View {
         HStack(spacing: 8) {
             if slider {
-                Slider(value: $value, in: range, step: step).labelsHidden().controlSize(.small).frame(width: 110)
+                SteppedSlider(value: $value, in: range, step: step).labelsHidden().controlSize(.small).frame(width: 110)
                     .accessibilityLabel(title)
             }
             HStack(spacing: 0) {
@@ -298,6 +298,36 @@ struct TextDraft<Content: View>: View {
     }
 }
 
+/// A pop-up menu button that shows `selectedTitle`, as Settings' choice menus draw it.
+struct SettingsMenu<Content: View>: View {
+    let title: String
+    let selectedTitle: String
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        Menu {
+            content
+        } label: {
+            HStack(spacing: 7) {
+                Text(selectedTitle).lineLimit(1)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold)).foregroundStyle(.secondary)
+            }
+            .font(.callout)
+            .padding(.horizontal, 10)
+            .frame(width: FillButton.sideWidth, height: 24)
+            .background(SettingsPalette.control, in: RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(SettingsPalette.groupBorder))
+            .contentShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .accessibilityLabel(title)
+        .accessibilityValue(selectedTitle)
+    }
+}
+
 struct SettingsSegments<Value: Hashable>: View {
     @Binding var selection: Value
     let options: [(Value, String)]
@@ -360,7 +390,7 @@ extension SettingsCallout where Trailing == EmptyView {
 }
 
 enum PackageOrigin: Equatable {
-    case builtIn, included, store, listed, installed, local
+    case builtIn, included, store, listed, installed, local, saved, themeLink, barLink, retired
     /// A private package source, by its name.
     case privateSource(String)
 
@@ -371,7 +401,11 @@ enum PackageOrigin: Equatable {
         case .store: "Store"
         case .listed: "Listed in Store"
         case .installed: "Installed"
-        case .local: "Local folder"
+        case .local: "Folder"
+        case .saved: "Saved by you"
+        case .themeLink: "From a link"
+        case .barLink: "Shared"
+        case .retired: "Retired"
         case let .privateSource(name): name
         }
     }
@@ -382,25 +416,40 @@ enum PackageOrigin: Equatable {
         case .store, .listed: "bag.fill"
         case .installed: "shippingbox.fill"
         case .local: "folder.fill"
+        case .saved: "person.fill"
+        case .themeLink: "link"
+        case .barLink: "person.2.fill"
+        case .retired: "archivebox.fill"
         case .privateSource: "lock.fill"
         }
     }
 
     var tint: Color {
         switch self {
-        case .builtIn, .included, .installed: .secondary
+        case .builtIn, .included, .installed, .local, .retired: .secondary
         case .store, .listed: .blue
-        case .local: SettingsPalette.warning
+        case .saved: .purple
+        case .themeLink, .barLink: .indigo
         case .privateSource: .accentColor
         }
     }
 
     /// Where an installed package came from, by its install record:
     /// - no record (installed before records existed): listed in the Store or just installed;
-    /// - a version installed from a folder, even under a source's ID: a local folder;
+    /// - installed from no source: why, as the record says, else a folder;
+    /// - a version installed from a folder under a source's ID: a folder;
     /// - a source that's no longer configured: its saved name, marked removed.
     static func installed(record: PackageInstallRecord?, version: String, listedInStore: Bool, sources: [PackageSource]) -> PackageOrigin {
         guard let record else { return listedInStore ? .listed : .installed }
+        if record.isLocal {
+            switch record.origin {
+            case .saved?: return .saved
+            case .themeLink?: return .themeLink
+            case .barLink?: return .barLink
+            case .retired?: return .retired
+            case nil: return .local
+            }
+        }
         if record.isLocal(version: version) { return .local }
         if record.source == PackageSource.storeID { return .store }
         if let source = sources.first(where: { $0.id == record.source }) { return .privateSource(source.name) }
@@ -439,8 +488,8 @@ struct PackageOriginBadge: View {
 
     private var background: AnyShapeStyle {
         switch source {
-        case .builtIn, .included, .installed: AnyShapeStyle(SettingsPalette.control)
-        case .store, .listed, .local, .privateSource: AnyShapeStyle(source.tint.opacity(0.15))
+        case .builtIn, .included, .installed, .local, .retired: AnyShapeStyle(SettingsPalette.control)
+        case .store, .listed, .saved, .themeLink, .barLink, .privateSource: AnyShapeStyle(source.tint.opacity(0.15))
         }
     }
 }

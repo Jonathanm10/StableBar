@@ -16,7 +16,7 @@ export const CONTRACT = [
   "workspaceDefaults.indicator", "workspaceDefaults.style.foreground",
   "workspaceDefaults.appStyle.width", "workspaceDefaults.appStyle.height",
   "workspaceDefaults.style.states.focused.foreground", "workspaceDefaults.style.states.focused.background",
-  "workspaceDefaults.style.cornerRadius", "workspaceDefaults.indicatorStyle.width",
+  "workspaceDefaults.style.background", "workspaceDefaults.style.cornerRadius", "workspaceDefaults.indicatorStyle.width",
   "workspaceDefaults.indicatorStyle.height", "workspaceDefaults.indicatorStyle.cornerRadius",
   "workspaceDefaults.indicatorStyle.offsetY", "workspaceDefaults.indicatorStyle.background",
   "workspaceDefaults.indicatorStyle.states.visible.background",
@@ -108,6 +108,7 @@ export function cssVariables(resolved) {
     "--ws-off": color(workspace.style.foreground),
     "--ws-on": color(focused.foreground),
     "--ws-ind": background(workspace.indicator === "underline" ? underline.background : focused.background),
+    "--ws-cell": background(workspace.style.background),
     "--ws-r": px(nonnegative(workspace.style.cornerRadius)),
     "--ws-app-w": px(nonnegative(workspace.appStyle?.width ?? 14)),
     "--ws-app-h": px(nonnegative(workspace.appStyle?.height ?? 14)),
@@ -162,7 +163,8 @@ export const PREVIEW_TARGETS = {
   "--track": { selector: ".preview-meter" },
   "--ws-off": { selector: ".preview-workspace:not(.is-focused)" },
   "--ws-on": { selector: ".preview-workspace.is-focused" },
-  "--ws-ind": { selector: ".preview-ws-fill .preview-workspace.is-focused, .preview-ws-under .preview-underline:not(.is-visible)" },
+  "--ws-ind": { selector: ".preview-ws-fill .preview-workspace.is-focused, .preview-ws-cells .preview-workspace.is-focused, .preview-ws-under .preview-underline:not(.is-visible)" },
+  "--ws-cell": { selector: ".preview-ws-cells .preview-workspace:not(.is-focused)" },
   "--ws-indicator": { selector: ".preview-workspaces" },
   "--ws-r": { selector: ".preview-workspace" },
   "--ws-app-w": { selector: ".preview-app-icon" },
@@ -215,7 +217,7 @@ export function affectedVariables(state, controlId, appearance) {
 }
 
 export function indicatorClass(resolved) {
-  return { background: "preview-ws-fill", underline: "preview-ws-under", none: "preview-ws-text" }[resolved.workspaceDefaults.indicator] ?? "preview-ws-fill";
+  return { background: "preview-ws-fill", underline: "preview-ws-under", cells: "preview-ws-cells", none: "preview-ws-text" }[resolved.workspaceDefaults.indicator] ?? "preview-ws-fill";
 }
 
 export function keptFromBase(config) {

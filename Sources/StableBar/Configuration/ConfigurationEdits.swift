@@ -1,6 +1,6 @@
 import Foundation
 
-struct ConfigurationEdit: Codable, Sendable {
+struct ConfigurationEdit: Codable, Equatable, Sendable {
     enum Action: String, Codable { case set, add, remove, reorder, screens, bar, defaults, popupDefaults, groupDefaults, roles, workspaceDefaults, tokens, providers, modeAliases, groups, workspaceSource, unset, profile, profiles, package, packageSource, theme }
     let action: Action
     var id: String?
@@ -9,6 +9,8 @@ struct ConfigurationEdit: Codable, Sendable {
     var name: String?
     var profiles: [[String: ConfigurationValue]]?
     var profile: String?
+    /// The `when` that `profile` gets when this edit creates it.
+    var profileConditions: [String: ConfigurationValue]?
 
     enum CodingKeys: String, CodingKey { case action, id, properties, ids, name, profiles }
 
@@ -34,8 +36,11 @@ struct ConfigurationEdit: Codable, Sendable {
         if let profile {
             var edit = self
             edit.profile = nil
+            edit.profileConditions = nil
             var profiles = try root["profiles"]?.decoded([[String: ConfigurationValue]].self) ?? []
-            if !profiles.contains(where: { $0["name"] == .string(profile) }) { profiles.append(["name": .string(profile)]) }
+            if !profiles.contains(where: { $0["name"] == .string(profile) }) {
+                profiles.append(["name": .string(profile)].merging(profileConditions.map { ["when": .object($0)] } ?? [:]) { $1 })
+            }
             let index = profiles.firstIndex { $0["name"] == .string(profile) }!
             let configuration = try (profiles[index]["configuration"] ?? .object([:])).decoded([String: ConfigurationValue].self)
             profiles[index]["configuration"] = .object(try edit.applying(to: configuration, widgetIDs: &widgetIDs))
@@ -332,6 +337,175 @@ func migrateStarterAppleLogo(_ url: URL, savedBy release: String? = AppVersion.r
     }
     guard root["widgets"] != .array(widgets) else { return }
     root["widgets"] = .array(widgets)
+    try writeConfiguration(configurationData(root, editing: original, savedBy: release), to: url)
+}
+
+/// Turns on the details popup of the Sound widgets in a file saved before 0.19.0, which brought it. A widget that sets
+/// `details`, a click action or a popup keeps what it says.
+func migrateEarlierSoundDetails(_ url: URL, pinned: String?, savedBy release: String? = AppVersion.release) throws {
+    if let pinned, compareReleases(pinned, "0.19.0") != .orderedAscending { return }
+    let original = try Data(contentsOf: url)
+    var root = try JSONDecoder().decode([String: ConfigurationValue].self, from: original)
+    guard case var .array(widgets) = root["widgets"] else { return }
+    let kept = ["details", "onClick", "open", "menu", "popup", "popupName"]
+    for (index, value) in widgets.enumerated() {
+        guard case var .object(widget) = value, widget["type"] == .string("audio"),
+              kept.allSatisfy({ (widget[$0] ?? .null) == .null }) else { continue }
+        widget["details"] = .bool(true)
+        widgets[index] = .object(widget)
+    }
+    guard root["widgets"] != .array(widgets) else { return }
+    root["widgets"] = .array(widgets)
+    try writeConfiguration(configurationData(root, editing: original, savedBy: release), to: url)
+}
+
+/// Selects an installed package in place of a retired theme's frozen copy: the Store's package of a theme that moved to
+/// the Store, installed from its copy in `storeThemes`, or a copy of an older one's own files. A file pinned to this release
+/// or a newer one before the launch's migrations, `pinned`, keeps its selections, since only a hand edit selects a frozen
+/// copy there.
+func migrateRetiredThemes(_ url: URL, pinned: String?, themes: URL?, storeThemes: URL?,
+                          savedBy release: String? = AppVersion.release) throws {
+    if let release, let pinned, compareReleases(pinned, release) != .orderedAscending { return }
+    let original = try Data(contentsOf: url)
+    let document = try JSONDecoder().decode([String: ConfigurationValue].self, from: original)
+    let packages = WidgetPackageStore(directory: url.deletingLastPathComponent().appending(path: "packages"))
+    var loader = ConfigurationLoader()
+    loader.themesDirectory = themes
+    // An included file can give this file's selection its version, so the composed selection decides.
+    let composed = try ConfigurationValue.object(loader.compose(url))
+    let composedProfileNames = loader.profiles.map(\.name)
+    let composedPin = loader.pinnedProfile
+    /// The files that replace `id`'s frozen copy; nil when it isn't retired, or another package has their ID and version.
+    func replacement(for id: String) throws -> (source: URL, manifest: WidgetPackageManifest, installed: Bool)? {
+        let directory = legacyThemeIDs.contains(id) ? themes : storeThemes
+        guard let source = directory?.appending(path: id == "built-in" ? "classic" : id),
+              FileManager.default.fileExists(atPath: source.path) else { return nil }
+        let manifest = try packages.manifest(at: source)
+        let destination = try packages.directory(id: manifest.id, version: manifest.version)
+        guard FileManager.default.fileExists(atPath: destination.path) else { return (source, manifest, false) }
+        return try packages.sameContents(source, destination) ? (source, manifest, true) : nil
+    }
+    func migrated(_ selection: ConfigurationValue, at pointer: String) throws -> ConfigurationValue? {
+        guard case var .object(fields) = selection, (composed.value(at: pointer + "/version") ?? .null) == .null,
+              case let .string(id)? = fields["id"], let replacement = try replacement(for: id) else { return nil }
+        if !replacement.installed {
+            if legacyThemeIDs.contains(id) {
+                var record = PackageInstallRecord.local
+                record.origin = .retired
+                _ = try packages.install(replacement.source, record: record)
+            } else {
+                _ = try packages.install(replacement.source, record: PackageInstallRecord(.store), requestedName: PackageSource.store.name)
+            }
+        }
+        fields["id"] = .string(replacement.manifest.id)
+        fields["version"] = .string(replacement.manifest.version)
+        return .object(fields)
+    }
+    var root = document
+    /// Whether the bar or a screen of `document` draws the fallback, which profiles name `built-in`: it selects no theme,
+    /// `built-in`, or a theme turned off.
+    func drawsTheFallback(_ document: [String: ConfigurationValue]) throws -> Bool {
+        let composed = try loader.compose(url, data: configurationData(document))
+        guard let theme = try composed["theme"]?.decoded(WidgetPackageSelection.self) else { return true }
+        let screens = try composed["screens"]?.decoded([String: [String: ConfigurationValue]].self) ?? [:]
+        let selections = try [theme] + screens.values.compactMap { try $0["theme"]?.decoded(WidgetPackageSelection.self) }
+        return selections.contains { !$0.enabled || $0.id == "built-in" }
+    }
+    if let theme = root["theme"] {
+        root["theme"] = try migrated(theme, at: "/theme") ?? theme
+    } else if composed.value(at: "/theme") == nil {
+        // No file of the configuration selects a theme, so it draws the fallback, which is Classic's look.
+        root["theme"] = try migrated(.object(["id": .string("built-in")]), at: "/theme")
+    }
+    if case var .object(screens) = root["screens"] {
+        for case let (kind, .object(screen)) in screens {
+            guard let theme = screen["theme"], let next = try migrated(theme, at: "/screens/\(kind)/theme") else { continue }
+            screens[kind] = .object(screen.merging(["theme": next]) { $1 })
+        }
+        root["screens"] = .object(screens)
+    }
+    if case var .array(profiles) = root["profiles"] {
+        // An included profile with the same name would merge with the renamed one.
+        let classicEditsTaken = composedProfileNames.contains("Classic edits")
+        var renamedBuiltInEdits = false
+        for case (let index, .object(var profile)) in profiles.enumerated() {
+            guard case var .object(when) = profile["when"], when["theme"] == .string("built-in") else { continue }
+            when["theme"] = .string("classic")
+            profile["when"] = .object(when)
+            // The name Settings gave the profile that keeps the edits of Classic, once called Built-in.
+            if profile["name"] == .string("Built-in edits") && !classicEditsTaken {
+                profile["name"] = .string("Classic edits")
+                renamedBuiltInEdits = true
+            }
+            profiles[index] = .object(profile)
+        }
+        if root["profiles"] != .array(profiles), try !drawsTheFallback(root) {
+            root["profiles"] = .array(profiles)
+            // A pin on the renamed profile, here or in an include, moves with it here, where the main file wins.
+            if renamedBuiltInEdits && composedPin == "Built-in edits" { root["profile"] = .string("Classic edits") }
+        }
+    }
+    guard root != document else { return }
+    try writeConfiguration(configurationData(root, editing: original, savedBy: release), to: url)
+}
+
+/// The bar sizes that the starter configuration had before 0.19.0, which are also the defaults. Themes set their own since.
+private let earlierStarterBarSizes: [(key: String, value: Double, property: KeyPath<BarSettings, Double> & Sendable)] = [
+    ("height", 40, \.height), ("inset", 12, \.inset), ("spacing", 8, \.spacing),
+]
+
+/// Removes the earlier starter's bar sizes from a file saved before 0.19.0, so that each theme draws with its own. Where the
+/// theme of the bar or of a screen with its own look sets one, the starter's stays as an edit of that theme; where no edit
+/// keeps every bar as it was, it stays in the file. The included themes came with 0.19.0, so a bar draws one of them with the
+/// starter's sizes only by mistake.
+func migrateStarterBarSizes(_ url: URL, pinned: String?, themes: URL?, savedBy release: String? = AppVersion.release) throws {
+    if let pinned, compareReleases(pinned, "0.19.0") != .orderedAscending { return }
+    let original = try Data(contentsOf: url)
+    let document = try JSONDecoder().decode([String: ConfigurationValue].self, from: original)
+    guard case var .object(bar) = document["bar"] else { return }
+    let sizes = earlierStarterBarSizes.filter { bar[$0.key] == .number($0.value) }
+    guard !sizes.isEmpty else { return }
+    var loader = ConfigurationLoader()
+    loader.themesDirectory = themes
+    let composed = try ConfigurationValue.object(loader.compose(url))
+    // A profile from another file with the name of a theme's edits would merge with them.
+    let otherProfileNames = Set(loader.profiles.map(\.name))
+        .subtracting(try (document["profiles"]?.decoded([ConfigurationProfile].self) ?? []).map(\.name))
+    let before = try loader.load(url)
+    let kinds = before.screensWithOwnLook.map(\.rawValue)
+    func bars(_ configuration: Configuration) -> [BarSettings] { [configuration.bar] + kinds.map { configuration.screenLooks[$0]!.bar } }
+    let kept = bars(before)
+    // The theme each of those bars draws, nil for the fallback.
+    let drawn = try ([composed.value(at: "/theme")] + kinds.map { composed.value(at: "/screens/\($0)/theme") ?? composed.value(at: "/theme") })
+        .map { try $0?.decoded(WidgetPackageSelection.self) }
+        .map { $0?.enabled == true ? $0 : nil }
+    let onIncludedTheme = drawn.map { $0.map { $0.version == nil && includedThemeIDs.contains($0.id) } ?? false }
+    let packages = WidgetPackageStore(directory: url.deletingLastPathComponent().appending(path: "packages"))
+    var root = document
+    var ids: [String] = []
+    for size in sizes {
+        var remaining = bar
+        remaining[size.key] = nil
+        var candidate = root
+        candidate["bar"] = .object(remaining)
+        let dropped = bars(try loader.load(url, data: configurationData(candidate)))
+        for (index, theme) in drawn.enumerated() where dropped[index][keyPath: size.property] != kept[index][keyPath: size.property] {
+            guard let theme, !onIncludedTheme[index] else { continue }
+            let directory = try theme.version.map { try packages.directory(id: theme.id, version: $0) } ?? themes!.appending(path: theme.id)
+            let profile = ThemeEdits(main: candidate, themeID: theme.id).profileName(theme: try packages.manifest(at: directory).name)
+            guard !otherProfileNames.contains(profile) else { continue }
+            var edit = ConfigurationEdit(action: .bar, properties: [size.key: .number(size.value)])
+            edit.profile = profile
+            edit.profileConditions = ["theme": .string(theme.id)]
+            candidate = try edit.applying(to: candidate, widgetIDs: &ids)
+        }
+        // A theme's edit also applies over a screen's own size, so it may change another bar.
+        let after = bars(try loader.load(url, data: configurationData(candidate)))
+        guard after.indices.allSatisfy({ onIncludedTheme[$0] || after[$0][keyPath: size.property] == kept[$0][keyPath: size.property] }) else { continue }
+        root = candidate
+        bar = remaining
+    }
+    guard root != document else { return }
     try writeConfiguration(configurationData(root, editing: original, savedBy: release), to: url)
 }
 

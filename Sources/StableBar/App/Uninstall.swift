@@ -52,9 +52,9 @@ struct UninstallSnapshot: Equatable {
             .filter { FileManager.default.fileExists(atPath: $0.path) }
     }
 
-    static func installedByHomebrew(caskrooms: [URL] = ["/opt/homebrew/Caskroom", "/usr/local/Caskroom"].map {
-        URL(filePath: $0, directoryHint: .isDirectory)
-    }) -> Bool {
+    static let caskrooms = ["/opt/homebrew/Caskroom", "/usr/local/Caskroom"].map { URL(filePath: $0, directoryHint: .isDirectory) }
+
+    static func installedByHomebrew(caskrooms: [URL] = caskrooms) -> Bool {
         caskrooms.contains { FileManager.default.fileExists(atPath: $0.appending(path: "stablebar").path) }
     }
 }
@@ -149,6 +149,11 @@ enum Uninstall {
             try await Task.sleep(for: interval)
         }
         return !isRunning()
+    }
+
+    /// The steps after a StableBar that wouldn't quit, which `run` didn't start, as not done.
+    static func notRun(_ steps: [UninstallStep], after outcomes: [UninstallOutcome]) -> [UninstallOutcome] {
+        steps.dropFirst(outcomes.count).map { UninstallOutcome(step: $0, error: "Not done while StableBar keeps running.") }
     }
 
     /// The steps that failed, each with what to do by hand.
@@ -248,7 +253,11 @@ enum UninstallSystem {
             _ = try await runCommand("/usr/bin/tccutil", arguments: ["reset", "All", bundleID])
         case let .files(urls):
             try Uninstall.remove(urls)
-            UserDefaults.standard.removePersistentDomain(forName: bundleID)
+            // Deleting the domain leaves an empty property list. UserDefaults writes it seconds later, even after
+            // StableBar has quit, while defaults writes it at once, so the file can go too. defaults fails when there's
+            // no domain left, as after brew uninstall --zap.
+            _ = try? await runCommand("/usr/bin/defaults", arguments: ["delete", bundleID])
+            try Uninstall.remove([FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Preferences/\(bundleID).plist")])
         }
     }
 
@@ -263,7 +272,11 @@ enum UninstallSystem {
     static func finish(after bar: pid_t) async -> Int32 {
         _ = try? await Uninstall.waitForQuit { kill(bar, 0) == 0 }
         let snapshot = UninstallSnapshot(files: files(), app: app, homebrew: UninstallSnapshot.installedByHomebrew())
-        let outcomes = await Uninstall.run(snapshot.stepsAfterQuit, perform: perform)
+        return report(await Uninstall.run(snapshot.stepsAfterQuit, perform: perform))
+    }
+
+    /// Without a bar or a terminal to tell, an alert lists the steps that failed and what to do by hand.
+    static func report(_ outcomes: [UninstallOutcome]) -> Int32 {
         guard outcomes.contains(where: { $0.error != nil }) else { return 0 }
         CFUserNotificationDisplayAlert(0, kCFUserNotificationCautionAlertLevel, nil, nil, nil,
                                        "StableBar couldn’t finish uninstalling" as CFString,

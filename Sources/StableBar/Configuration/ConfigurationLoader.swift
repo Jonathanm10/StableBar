@@ -489,6 +489,8 @@ struct ConfigurationPathIndex<Value> {
 }
 
 let bundledThemesDirectory = Bundle.main.url(forResource: "themes", withExtension: nil)
+/// The Store's packages of the themes that moved to the Store, which an update installs without the network.
+let storeThemesDirectory = Bundle.main.url(forResource: "store-themes", withExtension: nil)
 
 struct ConfigurationLoader: Sendable {
     var themesDirectory = bundledThemesDirectory
@@ -519,8 +521,8 @@ struct ConfigurationLoader: Sendable {
     private(set) var templates: [String: [String: ConfigurationValue]] = [:]
     private(set) var screenDocuments: [String: [String: ConfigurationValue]] = [:]
     private var packageBoundaries: [String: URL] = [:]
-    private var packageNames: [String: String] = [:]
-    private var packageIDs: [String: String] = [:]
+    private(set) var packageNames: [String: String] = [:]
+    private(set) var packageIDs: [String: String] = [:]
     /// The packages read so far, in load order.
     private var packageOrder: [String] = []
     /// The stored templates that make up each template name, in merge order (see `templateParts`).
@@ -687,7 +689,9 @@ struct ConfigurationLoader: Sendable {
         }
         if let selected, !names.contains(selected) { throw ThemeConfigurationError.unknownProfile(selected) }
         for profile in profiles where profile.enabled || profile.name == previewProfile {
-            let matches = selected.map { $0 == profile.name } ?? (profile.when?.matches(context) ?? true)
+            // A theme's edits belong to its look, so they still apply while another profile is pinned.
+            let matches = selected.map { $0 == profile.name || profile.when?.onlyTheme != nil && profile.when!.matches(context) }
+                ?? (profile.when?.matches(context) ?? true)
             if matches {
                 let source = layer.origins["profiles.\(profile.name).name"]!.inProfile(profile.name)
                 var origins = configurationOrigins(.object(profile.configuration), source: source)

@@ -53,14 +53,24 @@ final class ConfigurationStore {
             let data = try SetupPreferences(placement: placement, workspaces: workspaces).applying(to: starter)
             try writeConfiguration(data, to: sharedConfigurationURL)
         }
-        // The colors go first: they skip a file pinned to a release, and the other migrations pin it.
+        // The colors go first: they skip a file pinned to a release, and the other migrations pin it. The retired themes
+        // skip only a file that was already pinned to this release, so its pin is read before any of them.
+        let pinned = pinnedRelease(sharedConfigurationURL)
         try migrateEarlierColors(sharedConfigurationURL, savedBy: release)
         try migrateConfigurationFile(sharedConfigurationURL, savedBy: release)
         try migrateStarterAppleLogo(sharedConfigurationURL, savedBy: release)
+        try migrateEarlierSoundDetails(sharedConfigurationURL, pinned: pinned, savedBy: release)
+        try? migrateRetiredThemes(sharedConfigurationURL, pinned: pinned, themes: themesDirectory, storeThemes: storeThemesDirectory,
+                                  savedBy: release)
+        try? migrateStarterBarSizes(sharedConfigurationURL, pinned: pinned, themes: themesDirectory, savedBy: release)
         for url in screenSetupsWithOwnBars.map(ownBarURL(for:)) {
+            let pinned = pinnedRelease(url)
             try? migrateEarlierColors(url, savedBy: release)
             try? migrateConfigurationFile(url, savedBy: release)
             try? migrateStarterAppleLogo(url, savedBy: release)
+            try? migrateEarlierSoundDetails(url, pinned: pinned, savedBy: release)
+            try? migrateRetiredThemes(url, pinned: pinned, themes: themesDirectory, storeThemes: storeThemesDirectory, savedBy: release)
+            try? migrateStarterBarSizes(url, pinned: pinned, themes: themesDirectory, savedBy: release)
         }
         // Earlier setups put a bar below the menu bar at the status bar's thickness or the main display's notch height.
         // Once, while the menu bar shows and covers part of such a bar, it moves under each display's own menu bar.
@@ -228,6 +238,11 @@ final class ConfigurationStore {
         sharedConfigurationURL.deletingLastPathComponent().appending(path: setup.fileName)
     }
 
+    private func pinnedRelease(_ url: URL) -> String? {
+        let document = try? JSONDecoder().decode([String: ConfigurationValue].self, from: Data(contentsOf: url))
+        return ConfigurationSchema.release(document?["$schema"])
+    }
+
     /// Select the bar before launch can open Settings or setup, without starting its sources yet.
     func prepareScreenSetup(_ setup: ScreenSetup) {
         screenSetup = setup
@@ -383,15 +398,22 @@ final class ConfigurationStore {
         }
     }
 
-    private func removingPackage(_ manifest: WidgetPackageManifest, from document: [String: ConfigurationValue]) throws -> [ConfigurationEdit] {
+    private func removingPackage(_ manifest: WidgetPackageManifest, from document: [String: ConfigurationValue], of url: URL) throws -> [ConfigurationEdit] {
         let key = "\(manifest.id)/\(manifest.version)"
         var selections = try document["packages"]?.decoded([WidgetPackageSelection].self) ?? []
         if let theme = document["theme"] { selections.append(try theme.decoded(WidgetPackageSelection.self)) }
         var edits: [ConfigurationEdit] = []
         if let selection = selections.first(where: { $0.key == key }) {
-            edits.append(ConfigurationEdit(action: manifest.kind == .theme ? .theme : .package, properties: [
-                "id": .string(manifest.id), "version": .string(manifest.version), "enabled": .bool(false), "settings": .object(selection.settings)
-            ]))
+            if manifest.kind == .theme {
+                var edit = try firstIncludedThemeEdit(of: url)
+                // A theme turned off leaves the bar unthemed, and so does Clear in its place.
+                if !selection.enabled { edit.properties?["enabled"] = .bool(false) }
+                edits.append(edit)
+            } else {
+                edits.append(ConfigurationEdit(action: .package, properties: [
+                    "id": .string(manifest.id), "version": .string(manifest.version), "enabled": .bool(false), "settings": .object(selection.settings)
+                ]))
+            }
         }
         let screens = try document["screens"]?.decoded([String: [String: ConfigurationValue]].self) ?? [:]
         let screenThemes = try screens.filter { try $0.value["theme"]?.decoded(WidgetPackageSelection.self).key == key }
@@ -412,7 +434,7 @@ final class ConfigurationStore {
         let urls = [sharedConfigurationURL] + screenSetupsWithOwnBars.map(ownBarURL(for:))
         for url in urls where url != configurationURL {
             var other = newLoader()
-            let edits = try removingPackage(manifest, from: other.compose(url, context: context))
+            let edits = try removingPackage(manifest, from: other.compose(url, context: context), of: url)
             if edits.isEmpty { continue }
             let original = try Data(contentsOf: url)
             var root = try JSONDecoder().decode([String: ConfigurationValue].self, from: original)
@@ -426,7 +448,7 @@ final class ConfigurationStore {
         flushCustomization()
         let document = try loader.compose(configurationURL, data: configurationData(
             editedDocument([], replaying: fromCustomization ? [] : sessionEdits)), context: context)
-        let edits = try removingPackage(manifest, from: document)
+        let edits = try removingPackage(manifest, from: document, of: configurationURL)
         if fromCustomization {
             let data = try customizationData(edits, editing: Data(contentsOf: configurationURL))
             let (_, preview) = try configurationReplayingSession(over: data)
@@ -473,11 +495,19 @@ final class ConfigurationStore {
         return selection.flatMap { $0.key == choice.key ? $0.settings : nil } ?? [:]
     }
 
-    func themeEdit(for choice: ThemeChoice) throws -> ConfigurationEdit {
-        var inheritedRoot = try editedMainDocument(replaying: [])
+    func firstIncludedThemeEdit(of url: URL? = nil) throws -> ConfigurationEdit {
+        guard let themesDirectory else { throw WidgetPackageError.unknownTheme(includedThemeIDs[0]) }
+        let directory = themesDirectory.appending(path: includedThemeIDs[0])
+        let manifest = try WidgetPackageStore(directory: themesDirectory).manifest(at: directory)
+        return try themeEdit(for: ThemeChoice(manifest: manifest, directory: directory, isBundled: true), of: url)
+    }
+
+    func themeEdit(for choice: ThemeChoice, of url: URL? = nil) throws -> ConfigurationEdit {
+        let url = url ?? configurationURL
+        var inheritedRoot = try editedMainDocument(data: Data(contentsOf: url), replaying: [])
         inheritedRoot["theme"] = nil
         var loader = newLoader()
-        let document = try loader.compose(configurationURL, data: configurationData(inheritedRoot), context: context)
+        let document = try loader.compose(url, data: configurationData(inheritedRoot), context: context)
         let inherited = try document["theme"]?.decoded(WidgetPackageSelection.self)
         var edit = choice.edit
         if choice.isBuiltIn {
@@ -488,6 +518,7 @@ final class ConfigurationStore {
         }
         if edit.properties != nil {
             if choice.isBundled, inherited?.version != nil { edit.properties?["version"] = .null }
+            if inherited?.enabled == false { edit.properties?["enabled"] = .bool(true) }
             if edit.properties?["settings"] == nil, inherited?.settings.isEmpty == false {
                 edit.properties?["settings"] = .null
             }
@@ -534,7 +565,7 @@ final class ConfigurationStore {
         if let normalComposition { store.display(normalComposition.configuration, loader: normalComposition.loader) }
     }
 
-    private func configurationTryingTheme(_ choice: ThemeChoice, edits: [ConfigurationEdit]) throws -> (Configuration, ConfigurationLoader) {
+    func configurationTryingTheme(_ choice: ThemeChoice, edits: [ConfigurationEdit]) throws -> (Configuration, ConfigurationLoader) {
         var loader = newLoader()
         let settings = try themeSettings(for: choice, in: configurationLoader.document)
         let layer = try loader.readPackage(at: choice.directory, manifest: choice.manifest, settings: settings)

@@ -1,0 +1,159 @@
+import Foundation
+import os
+@testable import StableBar
+import Testing
+
+@Suite struct WorkspaceManagerScanTests {
+    private func option(_ source: WorkspaceSource, missing: Bool = false) -> WorkspaceManagerOption {
+        WorkspaceManagerOption(source: source, isMissing: missing)
+    }
+
+    @Test func rescanStartsAScan() {
+        var scan = WorkspaceManagerScan()
+        #expect(scan.handle(.rescan) == [.scan])
+        #expect(scan.isScanning)
+        #expect(scan.found == nil)
+    }
+
+    @Test func rescanWhileScanningQueuesOneMoreScan() {
+        var scan = WorkspaceManagerScan()
+        _ = scan.handle(.rescan)
+        #expect(scan.handle(.rescan) == [])
+        #expect(scan.handle(.rescan) == [])
+        #expect(scan.handle(.finished([.yabai])) == [.scan])
+        #expect(scan.found == [.yabai])
+        #expect(scan.isScanning)
+        #expect(scan.handle(.finished([.rift])) == [])
+        #expect(scan.found == [.rift])
+        #expect(!scan.isScanning)
+    }
+
+    @Test func finishedKeepsWhatWasFound() {
+        var scan = WorkspaceManagerScan()
+        _ = scan.handle(.rescan)
+        #expect(scan.handle(.finished([.yabai])) == [])
+        #expect(scan.found == [.yabai])
+        #expect(!scan.isScanning)
+    }
+
+    @Test func rescanKeepsThePreviousResultWhileScanning() {
+        var scan = WorkspaceManagerScan()
+        _ = scan.handle(.rescan)
+        _ = scan.handle(.finished([.yabai]))
+        #expect(scan.handle(.rescan) == [.scan])
+        #expect(scan.found == [.yabai])
+        #expect(scan.isScanning)
+    }
+
+    @Test func aSampleFinishesWithoutScanning() {
+        var scan = WorkspaceManagerScan()
+        #expect(scan.handle(.finished([.aerospace])) == [])
+        #expect(scan.found == [.aerospace])
+        #expect(!scan.isScanning)
+    }
+
+    @Test func listsFoundManagersInOrder() {
+        #expect(WorkspaceManagerOption.managers(found: [.rift, .aerospace], configured: .aerospace)
+            == [option(.aerospace), option(.rift)])
+    }
+
+    @Test func addsTheConfiguredManagerWhenNotFound() {
+        let managers = WorkspaceManagerOption.managers(found: [.aerospace], configured: .yabai)
+        #expect(managers == [option(.aerospace), option(.yabai, missing: true)])
+        #expect(managers.last?.title == "yabai (not found)")
+    }
+
+    @Test func unnamedSourceShowsAeroSpaceMissing() {
+        let managers = WorkspaceManagerOption.managers(found: [], configured: .aerospace)
+        #expect(managers == [option(.aerospace, missing: true)])
+        #expect(managers.first?.title == "AeroSpace (not found)")
+    }
+
+    @Test func spacesIsNeverAmongTheManagers() {
+        #expect(WorkspaceManagerOption.managers(found: [], configured: .spaces) == [])
+        #expect(WorkspaceManagerOption.spaces.title == "macOS Spaces")
+    }
+
+    @Test func beforeTheFirstScanListsOnlyTheConfiguredManager() {
+        #expect(WorkspaceManagerOption.managers(found: nil, configured: .omniwm) == [option(.omniwm)])
+    }
+
+    @Test func installedFindsCommandsOnPath() throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        #expect(FileManager.default.createFile(atPath: folder.appending(path: "yabai").path, contents: Data(),
+                                               attributes: [.posixPermissions: 0o755]))
+        let installed = WorkspaceSource.installed(path: folder.path)
+        #expect(installed.contains(.yabai))
+        #expect(installed.isDisjoint(with: [.aerospace, .rift, .spaces]))
+    }
+
+    @Test @MainActor func finderReportsWhatTheLookupFinds() async throws {
+        let finder = WorkspaceManagerFinder(lookup: WorkspaceManagerLookup { [.yabai] }, notifications: NotificationCenter())
+        finder.send(.rescan)
+        #expect(finder.scan.isScanning)
+        try await awaitCondition { finder.scan.found == [.yabai] }
+        #expect(!finder.scan.isScanning)
+    }
+
+    @Test @MainActor func finderRunsOneLookupAtATime() async throws {
+        let calls = OSAllocatedUnfairLock(initialState: 0)
+        let release = DispatchSemaphore(value: 0)
+        let finder = WorkspaceManagerFinder(lookup: WorkspaceManagerLookup {
+            calls.withLock { $0 += 1 }
+            release.wait()
+            return [.rift]
+        }, notifications: NotificationCenter())
+        finder.send(.rescan)
+        try await awaitCondition { calls.withLock { $0 } == 1 }
+        finder.send(.rescan)
+        finder.send(.rescan)
+        #expect(finder.scan.isScanning)
+        // Only checks that no other lookup starts meanwhile.
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(calls.withLock { $0 } == 1)
+        // One signal per possible lookup, so a wrongly started one can't hang the run.
+        for _ in 0..<3 { release.signal() }
+        try await awaitCondition { finder.scan.found == [.rift] && !finder.scan.isScanning }
+        // The rescans that came during the first lookup run one more, after it.
+        #expect(calls.withLock { $0 } == 2)
+    }
+
+    @Test @MainActor func findersShareALookupThatIsStillRunning() async throws {
+        let calls = OSAllocatedUnfairLock(initialState: 0)
+        let release = DispatchSemaphore(value: 0)
+        let lookup = WorkspaceManagerLookup {
+            calls.withLock { $0 += 1 }
+            release.wait()
+            return [.rift]
+        }
+        let first = WorkspaceManagerFinder(lookup: lookup, notifications: NotificationCenter())
+        let second = WorkspaceManagerFinder(lookup: lookup, notifications: NotificationCenter())
+        first.send(.rescan)
+        try await awaitCondition { calls.withLock { $0 } == 1 }
+        second.send(.rescan)
+        // Only checks that the second finder starts no lookup of its own.
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(calls.withLock { $0 } == 1)
+        for _ in 0..<2 { release.signal() }
+        try await awaitCondition { first.scan.found == [.rift] && second.scan.found == [.rift] }
+        #expect(calls.withLock { $0 } == 1)
+    }
+
+    @Test @MainActor func finderLooksAgainWhenTheLoginShellEnvironmentArrives() async throws {
+        let notifications = NotificationCenter()
+        let finder = WorkspaceManagerFinder(lookup: WorkspaceManagerLookup { [.aerospace] }, notifications: notifications)
+        notifications.post(name: loginShellEnvironmentLoaded, object: nil)
+        try await awaitCondition { finder.scan.found == [.aerospace] }
+    }
+
+    @Test func theMenuLeavesOutAnEmptyManagersSection() {
+        #expect(WorkspaceManagerOption.sections(found: [], configured: .spaces) == [[.spaces]])
+        #expect(WorkspaceManagerOption.sections(found: [.yabai], configured: .spaces) == [[option(.yabai)], [.spaces]])
+    }
+
+    @Test func searchFindsTheWorkspaceManagerByRescan() {
+        #expect(SettingsSearchResult.workspaces.matches("rescan"))
+    }
+}

@@ -29,7 +29,7 @@ final class WidgetAddCatalogTests: XCTestCase {
         XCTAssertEqual(disk.properties?["style"], choices.first { $0.id == "system" }?.properties?["style"])
         XCTAssertNil(disk.replacesPackage)
         XCTAssertTrue(choices.first { $0.id == "calendar" }!.description.contains("Calendar access"))
-        XCTAssertTrue(choices.first { $0.id == "workspaces" }!.description.contains("AeroSpace, yabai, OmniWM, Rift or macOS Spaces"))
+        XCTAssertTrue(choices.first { $0.id == "workspaces" }!.description.contains("AeroSpace, yabai, OmniWM, Rift, KiwiDesk or macOS Spaces"))
         XCTAssertEqual(choices.filter { $0.matches("SOUND") }.map(\.id), ["audio"])
     }
 
@@ -45,6 +45,13 @@ final class WidgetAddCatalogTests: XCTestCase {
         XCTAssertEqual(choices.filter { $0.package != nil }.map(\.id), ["store/battery-other", "store/battery-plus", "store/acme/date"])
         XCTAssertFalse(choices.contains { $0.id == "store/date" })
         XCTAssertTrue(choices.last!.isScript)
+    }
+
+    func testEssentialsMatchTheStoreRepositoryUnderEitherOwner() throws {
+        for (repository, included) in [("https://github.com/Seb-GRAF/stablebar-packages", true), ("https://github.com/stablebox/stablebar-packages", true), ("https://github.com/someone/stablebar-packages", false)] {
+            let manifest = try JSONDecoder().decode(WidgetPackageManifest.self, from: Data(#"{"id":"date","name":"Date","version":"1","kind":"widgets","entry":"config.json","repository":"\#(repository)"}"#.utf8))
+            XCTAssertEqual(WidgetAddCatalog.includes(manifest, record: nil), included, repository)
+        }
     }
 
     func testCatalogLoadsWithoutDownloadingArchivesAndSelectionReportsUnavailableArchive() async throws {

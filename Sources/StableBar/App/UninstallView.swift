@@ -4,64 +4,112 @@ import SwiftUI
 /// Settings › General › Uninstall: puts back what StableBar changed on this Mac, removes it and quits.
 struct UninstallSettings: View {
     let store: BarStore
-    @State private var snapshot = UninstallSnapshot()
-    @State private var confirming = false
+    @State private var uninstall: UninstallController
+
+    init(store: BarStore) {
+        self.store = store
+        _uninstall = State(initialValue: UninstallController(store: store))
+    }
 
     var body: some View {
         SettingRow(title: "Uninstall StableBar",
                    hint: UninstallSystem.isAvailable ? "Put back the macOS settings StableBar changed, remove what it added, then move it to the Trash."
                        : "Uninstall works from StableBar.app.") {
-            Button("Uninstall…") {
-                snapshot = UninstallSystem.snapshot()
-                confirming = true
-            }
-            .disabled(!UninstallSystem.isAvailable)
+            Button("Uninstall…") { uninstall.open() }
+                .disabled(!UninstallSystem.isAvailable)
         }
-        .sheet(isPresented: $confirming) { UninstallSheet(store: store, snapshot: snapshot) }
+        // The sheet reads the flow from the controller as it draws: a value captured for its content would be the one
+        // from before the button read this Mac.
+        .sheet(isPresented: Binding(get: { uninstall.flow.isPresented }, set: { if !$0 { uninstall.send(.cancel) } })) {
+            UninstallSheet(controller: uninstall)
+        }
+    }
+}
+
+/// Settings' uninstall: reads this Mac when the sheet opens and performs what `UninstallFlow` decides.
+@MainActor @Observable
+final class UninstallController {
+    private(set) var flow: UninstallFlow
+    @ObservationIgnored private weak var store: BarStore?
+
+    init(store: BarStore?, flow: UninstallFlow = UninstallFlow()) {
+        self.store = store
+        self.flow = flow
+    }
+
+    func open() {
+        send(.open(UninstallSystem.snapshot()))
+    }
+
+    func send(_ event: UninstallFlow.Event) {
+        for effect in flow.handle(event) { perform(effect) }
+    }
+
+    private func perform(_ effect: UninstallFlow.Effect) {
+        switch effect {
+        case let .run(steps):
+            // Stopped widgets and update checks can't write back the caches and preferences the steps remove.
+            store?.update?.stop()
+            store?.stop()
+            Task { send(.ranSteps(await Uninstall.run(steps, perform: UninstallSystem.perform))) }
+        case .startFinish:
+            do {
+                try UninstallSystem.finishAfterQuit()
+                send(.startedFinish(failure: nil))
+            } catch {
+                send(.startedFinish(failure: errorMessage(error)))
+            }
+        case .quit:
+            Self.endSheets(of: NSApp.windows)
+            NSApp.terminate(nil)
+        }
+    }
+
+    /// AppKit won't quit while a window has a sheet attached, and only beeps, so the sheet that asks to quit ends first.
+    static func endSheets(of windows: [NSWindow]) {
+        for window in windows {
+            guard let sheet = window.attachedSheet else { continue }
+            window.endSheet(sheet)
+            sheet.orderOut(nil)
+        }
     }
 }
 
 struct UninstallSheet: View {
-    let store: BarStore
-    let snapshot: UninstallSnapshot
+    let controller: UninstallController
     @State private var options: UninstallOptions
-    @State private var running = false
-    @State private var outcomes: [UninstallOutcome]?
-    /// Whether `--finish-uninstall` waits for StableBar to quit.
-    @State private var finishing = false
-    @Environment(\.dismiss) private var dismiss
 
-    init(store: BarStore, snapshot: UninstallSnapshot, outcomes: [UninstallOutcome]? = nil, finishing: Bool = false) {
-        self.store = store
-        self.snapshot = snapshot
-        _options = State(initialValue: UninstallOptions(snapshot))
-        _outcomes = State(initialValue: outcomes)
-        _finishing = State(initialValue: finishing)
+    init(controller: UninstallController) {
+        self.controller = controller
+        _options = State(initialValue: UninstallOptions(controller.flow.snapshot))
     }
 
+    private var snapshot: UninstallSnapshot { controller.flow.snapshot }
+
     var body: some View {
+        let phase = controller.flow.phase
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 14) {
-                if let outcomes { finished(outcomes) } else { confirmation }
+                if case let .finished(outcomes, finishing) = phase { finished(outcomes, finishing: finishing) } else { confirmation }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(20)
             Divider()
             HStack {
-                if running { ProgressView().controlSize(.small) }
+                if case .running = phase { ProgressView().controlSize(.small) }
                 Spacer()
-                if outcomes != nil {
-                    Button("Quit StableBar") { NSApp.terminate(nil) }.keyboardShortcut(.defaultAction)
+                if case .finished = phase {
+                    Button("Quit StableBar") { controller.send(.quit) }.keyboardShortcut(.defaultAction)
                 } else {
-                    Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).disabled(running)
-                    Button("Uninstall", role: .destructive, action: uninstall).disabled(running)
+                    Button("Cancel") { controller.send(.cancel) }.keyboardShortcut(.cancelAction).disabled(phase != .confirming)
+                    Button("Uninstall", role: .destructive) { controller.send(.confirm(options)) }.disabled(phase != .confirming)
                 }
             }
             .padding(12)
         }
         .frame(width: 520)
         .background(SettingsPalette.background)
-        .interactiveDismissDisabled(running || outcomes != nil)
+        .interactiveDismissDisabled(phase != .confirming)
     }
 
     @ViewBuilder private var confirmation: some View {
@@ -112,7 +160,7 @@ struct UninstallSheet: View {
         }
     }
 
-    @ViewBuilder private func finished(_ outcomes: [UninstallOutcome]) -> some View {
+    @ViewBuilder private func finished(_ outcomes: [UninstallOutcome], finishing: Bool) -> some View {
         let failed = outcomes.filter { $0.error != nil }
         Text(failed.isEmpty ? "Quit StableBar to finish uninstalling" : "Some steps still need you")
             .font(.system(size: 17, weight: .semibold))
@@ -147,34 +195,6 @@ struct UninstallSheet: View {
             }
             .padding(10)
             .background(SettingsPalette.field, in: RoundedRectangle(cornerRadius: 7))
-        }
-    }
-
-    private func uninstall() {
-        running = true
-        Task {
-            // Stopped widgets and update checks can't write back the caches and preferences the steps remove.
-            store.update?.stop()
-            store.stop()
-            // What would take away the app, its permissions and preferences waits until StableBar has quit, so a step that
-            // fails here leaves it whole until you quit it.
-            var outcomes = await Uninstall.run(snapshot.stepsBeforeQuit(options), perform: UninstallSystem.perform)
-            if Uninstall.finishesAfterQuit(outcomes) {
-                do {
-                    try UninstallSystem.finishAfterQuit()
-                    finishing = true
-                } catch {
-                    outcomes += snapshot.stepsAfterQuit.map {
-                        UninstallOutcome(step: $0, error: "StableBar couldn’t start this step: \(errorMessage(error))")
-                    }
-                }
-            }
-            running = false
-            if outcomes.allSatisfy({ $0.error == nil }) && !snapshot.homebrew {
-                NSApp.terminate(nil)
-            } else {
-                self.outcomes = outcomes
-            }
         }
     }
 }

@@ -96,7 +96,7 @@ There is no web view or custom drawing loop. Private macOS API, for hiding and r
 2. **Branch from `main` and open a pull request.** Nobody pushes to `main` directly. Fill in the template: the problem, the changes, how you tested them and how to merge, and end with the model and harness that did the work, or with "No agent". For visible changes, the screens bot posts before and after images ([Before and after screens](#before-and-after-screens)); upload a recording when motion matters, instead of committing it.
 3. **Keep one problem per pull request.** Unrelated fixes and cleanups get their own.
 4. **Wait for CI.** `Test` and `Commit messages` must pass. `Linked issue` and `Description` check the pull request itself and rerun when you edit its description: a `fix`, `feat` or `perf` pull request closes an issue ("Fixes #N" in the description), and Problem, Changes and Testing are filled in. Depending on what a pull request changes, `Build release`, `Docs images`, `Package`, `Draw screens` and `Draw website screens` run too ([Commits and releases](#commits-and-releases) lists when). Fix them before merging: the same failure on `main` stops the next beta. When screens changed, `Visual review` waits until a maintainer has looked at them and added the `visual-ok` label.
-5. **Merge** with a merge commit or a rebase merge, so semantic-release sees each commit. Squash only when the title alone should reach the changelog.
+5. **Merge** with a merge commit or a rebase merge, so semantic-release sees each commit. Squash only when the title alone should reach the changelog. Pull requests merge through a merge queue, which runs `Test` and `Commit messages` again on top of `main` before the pull request lands.
 
 Reviews are requested automatically from the people listed in [CODEOWNERS](.github/CODEOWNERS), but they are not required. Ask for one when a change is risky or outside your usual area.
 
@@ -134,11 +134,12 @@ A stable release pushes its commit and tag before it publishes the GitHub releas
 
 Both jobs use the CI run number, which only goes up, so a stable build always numbers higher than the betas before it. In-app updates compare that number to find the newest release.
 
-Both jobs sign and notarize the app with a Developer ID when the repository has one, and only then add the release to the update feed, with an EdDSA signature as well. Without a Developer ID, builds are ad-hoc signed and `scripts/prepare-app-info.sh` leaves out their `SUFeedURL`. To set it up, add:
+Both jobs sign and notarize the app with a Developer ID when the repository has one, and only then add the release to the update feed, with an EdDSA signature as well. Without a Developer ID, builds are ad-hoc signed and `scripts/prepare-app-info.sh` leaves out their `SUFeedURL`. To set it up, add to the `release` environment, which only `main` can use:
 
 - the `DEVELOPER_ID_CERTIFICATE` secret: the Developer ID Application certificate and its private key, exported as a `.p12` and base64-encoded, with its password in the `DEVELOPER_ID_CERTIFICATE_PASSWORD` secret;
 - an App Store Connect API key for notarization: the `.p8` file's contents in the `NOTARY_API_KEY` secret, and its key ID and issuer ID in the `NOTARY_API_KEY_ID` and `NOTARY_API_ISSUER` variables;
-- the `SPARKLE_ED_PRIVATE_KEY` secret: the private EdDSA key whose public key is `SUPublicEDKey` in [Resources/Info.plist](Resources/Info.plist).
+- the `SPARKLE_ED_PRIVATE_KEY` secret: the private EdDSA key whose public key is `SUPublicEDKey` in [Resources/Info.plist](Resources/Info.plist);
+- the `RELEASE_APP_PRIVATE_KEY` secret: the release app's private key, with its client ID in the `RELEASE_APP_CLIENT_ID` variable. A stable release uses the app to push to `main` and to the Homebrew tap.
 
 `scripts/publish-appcast.sh` adds each signed release to `appcast.xml` in the `appcast` prerelease, the feed every release checks, with betas on Sparkle's `beta` channel. Each item carries its GitHub release notes, whose bullet points the update tile's popup lists, and a link to the release.
 
@@ -149,31 +150,31 @@ The private key was made with Sparkle's `generate_keys`, which `swift build` put
 ```sh
 dir=$(mktemp -d)
 .build/artifacts/sparkle/Sparkle/bin/generate_keys -x "$dir/key"
-gh secret set SPARKLE_ED_PRIVATE_KEY < "$dir/key"
+gh secret set SPARKLE_ED_PRIVATE_KEY --env release < "$dir/key"
 rm -r "$dir"
 ```
 
 Before deleting the exported file, keep a copy somewhere safe, such as a password manager: GitHub never shows a secret again. `generate_keys -f <file>` imports that copy into another Mac's keychain. If the key is lost or leaked, make a new one with `generate_keys --account <name>`, put its public key in `SUPublicEDKey`, set the secret to it with `generate_keys --account <name> -x`, and release: installed copies accept that release on its Developer ID and check the new key from then on. To sign with another Developer ID team, keep the key: installed copies accept that release on its EdDSA signature. A copy still on a release from before the key can check only the Developer ID, since Sparkle checks an update against the installed app, not against the release before it. So publish the new team's releases with `generate_appcast --minimum-update-version` set to the build number of the first release with the key: older copies skip them and first update to the old team's newest release.
 
-A stable release then sets the version and SHA-256 of the `stablebar` cask in [Seb-GRAF/homebrew-tap](https://github.com/Seb-GRAF/homebrew-tap). It pushes with the `HOMEBREW_TAP_TOKEN` secret: a fine-grained token for that repository only, with read and write access to its contents.
+A stable release then sets the version and SHA-256 of the `stablebar` cask in [stablebox/homebrew-tap](https://github.com/stablebox/homebrew-tap). It pushes with a token from the release app, limited to that repository's contents, so the app must stay installed on `stablebox` with access to `homebrew-tap`.
 
 Release jobs set `STABLEBAR_RELEASE_BUILD=1` when packaging to preserve their stamped version and build number. Other app builds get Development metadata from the checkout's Git revision, including changes since its nearest release tag and a `-dirty` suffix for local changes. Without Git metadata, the version is `0.0.0-dev`. This changes only the built app's plist; the tracked release plist stays untouched.
 
 ## Docs images
 
-`scripts/render-docs-images.sh` draws the images in `docs/images` from the app's own bar, popup and Settings views, with sample data, a fixed date (Thursday 22 October 2026, 09:41 UTC) and a local, empty Store index, and writes them as WebP. Two runs of one commit on one Mac draw the same pixels. It needs `cwebp`: `brew install webp`. The **Docs images** CI job draws them on every push to `main` and on pull requests that change the app, and a stable release commits them, so a change to the bar, popups or Settings doesn't need new images. To show something new, add a scene to [DocsImages.swift](Sources/StableBar/Rendering/DocsImages.swift).
+`scripts/render-docs-images.sh` draws the images in `docs/images` from the app's own bar, popup and Settings views, with sample data, a fixed date (Thursday 22 October 2026, 09:41 UTC) and a local, empty Store index, and writes them as WebP. Like [scenes](#scenes), each is drawn once its views hold still, so two runs of one commit on one Mac draw the same pixels. It needs `cwebp`: `brew install webp`. The **Docs images** CI job draws them on every push to `main` and on pull requests that change the app, and a stable release commits them, so a change to the bar, popups or Settings doesn't need new images. To show something new, add a scene to [DocsImages.swift](Sources/StableBar/Rendering/DocsImages.swift).
 
 ## Scenes
 
-A scene file in [scenes](scenes) describes one screen to draw: a configuration, inline or as a path such as `../Resources/config.json`, the package folders to install beside it, such as `../examples/packages/system-monitor`, the sample outputs, graph history, and AeroSpace workspaces or yabai spaces its widgets show, and what to draw: the `bar`, the bar in edit mode (`editBar`), a widget's `popup`, a `settings` page, the `uninstall` sheet for a sample Mac, the `update` popup for a sample offer, a step of `setup`'s tour, or the `accessibilityGuide` panel shown over System Settings. A setup scene pins what setup reads from the Mac, such as the menu bar, the permissions and the battery, and the choices made before its step. Those choices show in the tour but not on the bar, since previewing them would start the commands of the widgets they add. [scene.schema.json](scene.schema.json) lists every key. Draw them with:
+A scene file in [scenes](scenes) describes one screen to draw: a configuration, inline or as a path such as `../Resources/config.json`, the package folders to install beside it, such as `../examples/packages/system-monitor`, the sample outputs, graph history, and AeroSpace workspaces or yabai spaces its widgets show, the `wallpaper` behind a bar, a popup or the previews of the bar in Settings and setup, and what to draw: the `bar`, the bar in edit mode (`editBar`), a widget's `popup`, a `settings` page, the `uninstall` sheet for a sample Mac, the `update` popup for a sample offer, a step of `setup`'s tour, or the `accessibilityGuide` panel shown over System Settings. A setup scene pins what setup reads from the Mac, such as the menu bar, the permissions and the battery, and the choices made before its step. Those choices show in the tour but not on the bar, since previewing them would start the commands of the widgets they add. [scene.schema.json](scene.schema.json) lists every key. Draw them with:
 
 ```sh
 StableBar --render-scenes /tmp/scenes scenes
 ```
 
-It writes `<name>-dark.png` and `<name>-light.png` for each scene, and `scenes.json` with each scene's images or the error that stopped it. It runs nothing (no command, provider, window manager or network request), and every clock shows Thursday 22 October 2026, 09:41 UTC, so two runs of one commit on one Mac draw the same pixels. Text about the Mac itself, such as a display's name or the window managers installed, still comes from the Mac that draws.
+It writes `<name>-dark.png` and `<name>-light.png` for each scene, and `scenes.json` with each scene's images or the error that stopped it. It runs nothing (no command, provider, window manager or network request), and every clock shows Thursday 22 October 2026, 09:41 UTC, so two runs of one commit on one Mac draw the same pixels. Each image is drawn once its views hold still: three drawings in a row match, held for two seconds while a spinner shows, as when a page is loading. Each scene is drawn in a process of its own, as many at a time as the Mac has cores, up to six, so its images don't depend on the scenes drawn before it. Scroll bars always show, as on CI's Macs. Text about the Mac itself, such as a display's name or the window managers installed, still comes from the Mac that draws.
 
-A change you can see extends the scene that shows its area, or adds one when none does. Scenes can be edited, merged or deleted. Keep the format additive: a build reports a scene it can't read as an error and draws the others. Name scene files with letters, digits, dots, dashes and underscores, so the screens bot can show them.
+A change you can see extends the scene that shows its area, or adds one when none does. Scenes can be edited, merged or deleted. Keep the format additive: a build reports a scene it can't read as an error and draws the others. Name scene files with letters, digits, dots, dashes and underscores, so the screens bot can show them. Two names that differ only in case are the same name.
 
 ## Before and after screens
 
