@@ -430,6 +430,66 @@ func migrateRetiredThemes(_ url: URL, pinned: String?, themes: URL?, storeThemes
     try writeConfiguration(configurationData(root, editing: original, savedBy: release), to: url)
 }
 
+/// The bar sizes that the starter configuration had before 0.19.0, which are also the defaults. Themes set their own since.
+private let earlierStarterBarSizes: [(key: String, value: Double, property: KeyPath<BarSettings, Double> & Sendable)] = [
+    ("height", 40, \.height), ("inset", 12, \.inset), ("spacing", 8, \.spacing),
+]
+
+/// Removes the earlier starter's bar sizes from a file saved before 0.19.0, so that each theme draws with its own. Where the
+/// theme of the bar or of a screen with its own look sets one, the starter's stays as an edit of that theme; where no edit
+/// keeps every bar as it was, it stays in the file. The included themes came with 0.19.0, so a bar draws one of them with the
+/// starter's sizes only by mistake.
+func migrateStarterBarSizes(_ url: URL, pinned: String?, themes: URL?, savedBy release: String? = AppVersion.release) throws {
+    if let pinned, compareReleases(pinned, "0.19.0") != .orderedAscending { return }
+    let original = try Data(contentsOf: url)
+    let document = try JSONDecoder().decode([String: ConfigurationValue].self, from: original)
+    guard case var .object(bar) = document["bar"] else { return }
+    let sizes = earlierStarterBarSizes.filter { bar[$0.key] == .number($0.value) }
+    guard !sizes.isEmpty else { return }
+    var loader = ConfigurationLoader()
+    loader.themesDirectory = themes
+    let composed = try ConfigurationValue.object(loader.compose(url))
+    // A profile from another file with the name of a theme's edits would merge with them.
+    let otherProfileNames = Set(loader.profiles.map(\.name))
+        .subtracting(try (document["profiles"]?.decoded([ConfigurationProfile].self) ?? []).map(\.name))
+    let before = try loader.load(url)
+    let kinds = before.screensWithOwnLook.map(\.rawValue)
+    func bars(_ configuration: Configuration) -> [BarSettings] { [configuration.bar] + kinds.map { configuration.screenLooks[$0]!.bar } }
+    let kept = bars(before)
+    // The theme each of those bars draws, nil for the fallback.
+    let drawn = try ([composed.value(at: "/theme")] + kinds.map { composed.value(at: "/screens/\($0)/theme") ?? composed.value(at: "/theme") })
+        .map { try $0?.decoded(WidgetPackageSelection.self) }
+        .map { $0?.enabled == true ? $0 : nil }
+    let onIncludedTheme = drawn.map { $0.map { $0.version == nil && includedThemeIDs.contains($0.id) } ?? false }
+    let packages = WidgetPackageStore(directory: url.deletingLastPathComponent().appending(path: "packages"))
+    var root = document
+    var ids: [String] = []
+    for size in sizes {
+        var remaining = bar
+        remaining[size.key] = nil
+        var candidate = root
+        candidate["bar"] = .object(remaining)
+        let dropped = bars(try loader.load(url, data: configurationData(candidate)))
+        for (index, theme) in drawn.enumerated() where dropped[index][keyPath: size.property] != kept[index][keyPath: size.property] {
+            guard let theme, !onIncludedTheme[index] else { continue }
+            let directory = try theme.version.map { try packages.directory(id: theme.id, version: $0) } ?? themes!.appending(path: theme.id)
+            let profile = ThemeEdits(main: candidate, themeID: theme.id).profileName(theme: try packages.manifest(at: directory).name)
+            guard !otherProfileNames.contains(profile) else { continue }
+            var edit = ConfigurationEdit(action: .bar, properties: [size.key: .number(size.value)])
+            edit.profile = profile
+            edit.profileConditions = ["theme": .string(theme.id)]
+            candidate = try edit.applying(to: candidate, widgetIDs: &ids)
+        }
+        // A theme's edit also applies over a screen's own size, so it may change another bar.
+        let after = bars(try loader.load(url, data: configurationData(candidate)))
+        guard after.indices.allSatisfy({ onIncludedTheme[$0] || after[$0][keyPath: size.property] == kept[$0][keyPath: size.property] }) else { continue }
+        root = candidate
+        bar = remaining
+    }
+    guard root != document else { return }
+    try writeConfiguration(configurationData(root, editing: original, savedBy: release), to: url)
+}
+
 /// Turns the offset an earlier setup wrote for Below menu bar into `belowMenuBar`, so the bar starts under each display's own
 /// menu bar. Earlier setups wrote the menu bar's height then, one of `offsets`, as the bar's own offset. A bar that already
 /// says whether it sits below the menu bar stays as it is.

@@ -2301,6 +2301,62 @@ private let bundledThemes = URL(filePath: #filePath).deletingLastPathComponent()
     #expect(configuration.screenLooks["laptop"]?.bar.height == 32)
 }
 
+/// Nord sets its own height, so the bar on Nord keeps the starter's as Nord's edit. Léman sets none, and Clear came after the
+/// starter's sizes, so the screens on them draw with their theme's.
+@Test func theEarlierStartersBarSizesLeaveTheFileAndStayAsAnEditOfAThemeThatSetsItsOwn() throws {
+    let fixture = try ThemeGalleryFixture(#"""
+    {"theme":{"id":"nord"},"bar":{"height":40,"offset":0,"inset":12,"spacing":8},
+     "screens":{"laptop":{"theme":{"id":"leman"}},"monitor":{"theme":{"id":"clear"}}},"widgets":[]}
+    """#)
+    defer { fixture.close() }
+    try migrateStarterBarSizes(fixture.url, pinned: "0.18.0", themes: fixture.themes)
+    let document = try fixture.document()
+    #expect(document["bar"] == .object(["offset": .number(0)]))
+    #expect(document["profiles"] == .array([.object([
+        "name": .string("Nord edits"), "when": .object(["theme": .string("nord")]),
+        "configuration": .object(["bar": .object(["height": .number(40)])]),
+    ])]))
+    var loader = ConfigurationLoader()
+    loader.themesDirectory = fixture.themes
+    let configuration = try loader.load(fixture.url)
+    let sizes = { (bar: BarSettings?) in bar.map { [$0.height, $0.inset, $0.spacing] } }
+    #expect(sizes(configuration.bar) == [40, 12, 8])
+    #expect(sizes(configuration.screenLooks["laptop"]?.bar) == [40, 12, 8])
+    #expect(sizes(configuration.screenLooks["monitor"]?.bar) == [37, 14, 4])
+}
+
+/// A size someone chose stays, and so does every size of a file that 0.19.0 or later saved.
+@Test func aChosenBarSizeAndAFileSavedByTheReleaseWithoutTheStartersSizesKeepTheirSizes() throws {
+    let chosen = try ThemeGalleryFixture(#"{"bar":{"height":36,"inset":12,"spacing":8},"widgets":[]}"#)
+    defer { chosen.close() }
+    try migrateStarterBarSizes(chosen.url, pinned: nil, themes: chosen.themes)
+    #expect(try chosen.document()["bar"] == .object(["height": .number(36)]))
+    let saved = try ThemeGalleryFixture(#"{"bar":{"height":40,"inset":12,"spacing":8},"widgets":[]}"#)
+    defer { saved.close() }
+    let before = try Data(contentsOf: saved.url)
+    try migrateStarterBarSizes(saved.url, pinned: "0.19.0", themes: saved.themes)
+    #expect(try Data(contentsOf: saved.url) == before)
+}
+
+/// Nord's edit would also replace the height a screen on Nord sets itself, and an included "Nord edits" would take the edit
+/// in, so the starter's height stays in the file.
+@Test func theStartersBarSizeStaysWhereNordsEditCantKeepEveryBar() throws {
+    let screen = try ThemeGalleryFixture(#"""
+    {"theme":{"id":"nord"},"bar":{"height":40,"inset":12,"spacing":8},"screens":{"laptop":{"bar":{"height":28}}},"widgets":[]}
+    """#)
+    defer { screen.close() }
+    try migrateStarterBarSizes(screen.url, pinned: nil, themes: screen.themes)
+    #expect(try screen.document()["bar"] == .object(["height": .number(40)]))
+    #expect(try screen.document()["profiles"] == nil)
+    let included = try ThemeGalleryFixture(#"{"includes":["look.json"],"theme":{"id":"nord"},"bar":{"height":40},"widgets":[]}"#)
+    defer { included.close() }
+    try included.write(#"{"profiles":[{"name":"Nord edits","when":{"appearance":"dark"},"configuration":{}}]}"#,
+                       to: included.directory.appending(path: "look.json"))
+    let before = try Data(contentsOf: included.url)
+    try migrateStarterBarSizes(included.url, pinned: nil, themes: included.themes)
+    #expect(try Data(contentsOf: included.url) == before)
+}
+
 /// Built-in, which a configuration without a theme draws, becomes the Store theme Classic, and its profiles follow it.
 @Test(arguments: ["", #""theme":{"id":"built-in"},"#])
 func builtInBecomesClassicWithItsProfiles(theme: String) throws {

@@ -61,12 +61,14 @@ final class ConfigurationStore {
         try migrateStarterAppleLogo(sharedConfigurationURL, savedBy: release)
         try? migrateRetiredThemes(sharedConfigurationURL, pinned: pinned, themes: themesDirectory, storeThemes: storeThemesDirectory,
                                   savedBy: release)
+        try? migrateStarterBarSizes(sharedConfigurationURL, pinned: pinned, themes: themesDirectory, savedBy: release)
         for url in screenSetupsWithOwnBars.map(ownBarURL(for:)) {
             let pinned = pinnedRelease(url)
             try? migrateEarlierColors(url, savedBy: release)
             try? migrateConfigurationFile(url, savedBy: release)
             try? migrateStarterAppleLogo(url, savedBy: release)
             try? migrateRetiredThemes(url, pinned: pinned, themes: themesDirectory, storeThemes: storeThemesDirectory, savedBy: release)
+            try? migrateStarterBarSizes(url, pinned: pinned, themes: themesDirectory, savedBy: release)
         }
         // Earlier setups put a bar below the menu bar at the status bar's thickness or the main display's notch height.
         // Once, while the menu bar shows and covers part of such a bar, it moves under each display's own menu bar.
