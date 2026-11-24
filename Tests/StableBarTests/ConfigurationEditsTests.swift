@@ -1,3 +1,4 @@
+import Testing
 import XCTest
 @testable import StableBar
 
@@ -155,4 +156,27 @@ final class ConfigurationEditsTests: XCTestCase {
         root = try ConfigurationEdit(action: .packageSource, id: "acme").applying(to: root, widgetIDs: &ids)
         XCTAssertNil(root["packageSources"])
     }
+}
+
+@Test func soundWidgetsSavedBefore019TurnOnTheirDetails() throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: "\(UUID().uuidString).json")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let earlier = Data(#"""
+    {
+      "widgets": [
+        { "id": "sound", "type": "audio", "position": "right" },
+        { "id": "off", "type": "audio", "position": "right", "details": false },
+        { "id": "clicked", "type": "audio", "position": "right", "onClick": "open -a 'Audio MIDI Setup'" },
+        { "id": "cleared", "type": "audio", "position": "right", "open": null },
+        { "id": "battery", "type": "battery", "position": "right" }
+      ]
+    }
+    """#.utf8)
+    try earlier.write(to: url)
+    try migrateEarlierSoundDetails(url, pinned: "0.19.0")
+    #expect(try Data(contentsOf: url) == earlier, "A file saved by 0.19.0 keeps what it says")
+
+    try migrateEarlierSoundDetails(url, pinned: "0.19.0-beta.20261123164352.1618")
+    let widgets = try JSONDecoder().decode(Configuration.self, from: Data(contentsOf: url)).widgets
+    #expect(widgets.map(\.details) == [true, false, false, true, false])
 }

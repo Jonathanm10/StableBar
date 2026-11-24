@@ -284,7 +284,7 @@ struct SetupPreferences: Equatable, Codable, Sendable {
                 ]
                 """#
             case .battery: json = #"[{ "id": "battery", "type": "battery", "position": "right", "details": true }]"#
-            case .sound: json = #"[{ "id": "sound", "type": "audio", "position": "right" }]"#
+            case .sound: json = #"[{ "id": "sound", "type": "audio", "position": "right", "details": true }]"#
             case .menuBarItems: json = #"[{ "id": "menu-bar-items", "type": "menuBarItems", "position": "right" }]"#
             }
             return try! JSONDecoder().decode([[String: ConfigurationValue]].self, from: Data(json.utf8))
@@ -397,7 +397,7 @@ struct SetupPreferences: Equatable, Codable, Sendable {
         [
           { "id": "apple", "type": "appleMenu", "position": "left" },
           { "id": "app-menu", "type": "appMenu", "position": "left" },
-          { "id": "sound", "type": "audio", "position": "right" },
+          { "id": "sound", "type": "audio", "position": "right", "details": true },
           { "id": "clock", "type": "clock", "position": "right", "format": "EEE d MMM  HH:mm", "onClick": "open -a Calendar" },
           { "id": "menu-bar-items", "type": "menuBarItems", "position": "right" }
         ]
