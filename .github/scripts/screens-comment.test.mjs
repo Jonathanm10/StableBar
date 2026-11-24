@@ -61,7 +61,7 @@ test("readManifest rejects what compare-screens doesn't write", () => {
     "digest not hex": manifest([{ ...good, afterDigest: "x".repeat(64) }]),
     "truncated not a flag": manifest([{ ...good, truncated: "yes" }]),
     "failure without message": manifest([], [{ id: "scenes/x" }]),
-    "too many screens": manifest(Array.from({ length: 301 }, (_, index) => screen(`docs/s${index}`, "unchanged"))),
+    "too many screens": manifest(Array.from({ length: 1001 }, (_, index) => screen(`docs/s${index}`, "unchanged"))),
     "too many failures": manifest([], Array.from({ length: 51 }, (_, index) => ({ id: `scenes/s${index}`, error: "x" }))),
     "image of another screen": manifest([{ ...good, id: "docs/b" }]),
   };
